@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://bnwasal.com/</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://bnwasal.com/"/>
+    <image:image>
+      <image:loc>https://bnwasal.com/assets/images/logo.png</image:loc>
+      <image:title>بنوصل - منصة توصيل الشحنات والطلبات</image:title>
+      <image:caption>شعار بنوصل - تطبيق توصيل الشحنات في مصر (الإسكندرية)</image:caption>
+    </image:image>
+  </url>
+  <url>
+    <loc>https://bnwasal.com/features.html</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://bnwasal.com/features.html"/>
+  </url>
+  <url>
+    <loc>https://bnwasal.com/download.html</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://bnwasal.com/download.html"/>
+  </url>
+  <url>
+    <loc>https://bnwasal.com/about.html</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://bnwasal.com/about.html"/>
+  </url>
+  <url>
+    <loc>https://bnwasal.com/contact.html</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+    <xhtml:link rel="alternate" hreflang="ar" href="https://bnwasal.com/contact.html"/>
+  </url>
+  <url>
+    <loc>https://bnwasal.com/privacy.html</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://bnwasal.com/terms.html</loc>
+    <lastmod>2026-06-01</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+</urlset>

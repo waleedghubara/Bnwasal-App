@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="page_download_title">تحميل التطبيق - بنوصل</title>
+  <meta name="description" content="حمّل تطبيق بنوصل للتوصيل الذكي على أجهزة Android و iOS">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" type="image/png" href="assets/images/logo.png">
+  <link rel="apple-touch-icon" href="assets/images/logo.png">
+</head>
+<body>
+  <nav class="navbar" id="navbar">
+    <div class="container">
+      <a href="index.html" class="logo">
+        <img src="assets/images/logo.png" alt="بنوصل">
+      </a>
+      <div class="nav-links">
+        <a href="index.html" data-i18n="nav_home">الرئيسية</a>
+        <a href="features.html" data-i18n="nav_features">المميزات</a>
+        <a href="about.html" data-i18n="nav_about">من نحن</a>
+        <a href="contact.html" data-i18n="nav_contact">اتصل بنا</a>
+        <a href="download.html" class="active btn btn-primary btn-sm" data-i18n="nav_download_btn"><span>حمّل التطبيق</span></a>
+      </div>
+      <div class="nav-actions">
+        <button class="lang-toggle" onclick="toggleLanguage()" data-i18n="lang_switch">English</button>
+        <button class="mobile-menu-btn" onclick="toggleMobileMenu()" aria-label="Toggle menu"><i class="fas fa-bars"></i></button>
+      </div>
+    </div>
+  </nav>
+
+  <section class="page-header">
+    <div class="breadcrumb">
+      <a href="index.html" data-i18n="breadcrumb_home">الرئيسية</a><span>/</span>
+      <span data-i18n="page_download_title">تحميل التطبيق</span>
+    </div>
+    <h1 data-i18n="page_download_title">تحميل التطبيق</h1>
+    <p data-i18n="page_download_desc">احصل على تطبيق بنوصل على جهازك الآن</p>
+  </section>
+
+  <section class="download-page">
+    <div class="container">
+      <div class="download-page-hero reveal">
+        <h2 class="section-title" data-i18n="download_title">حمّل تطبيق بنوصل الآن</h2>
+        <p class="section-subtitle" data-i18n="download_subtitle">ابدأ رحلة التوصيل الذكية. التطبيق متاح على متجري التطبيقات.</p>
+      </div>
+
+      <div class="download-options reveal">
+        <div class="download-card">
+          <div class="download-card-icon" style="color: #34A853;"><i class="fab fa-google-play"></i></div>
+          <h3 data-i18n="download_page_android_title">Android</h3>
+          <p data-i18n="download_page_android_desc">حمّل تطبيق بنوصل لأجهزة الأندرويد</p>
+          <a href="#" class="btn btn-primary" id="androidDownloadBtn">
+            <i class="fab fa-google-play"></i> <span data-i18n="download_android">حمله من Google Play</span>
+          </a>
+          <div class="download-qr">
+            <p data-i18n="download_page_qr">امسح الرمز للتحميل</p>
+            <div class="qr-placeholder"><i class="fas fa-qrcode"></i></div>
+          </div>
+        </div>
+
+        <div class="download-card">
+          <div class="download-card-icon" style="color: #000;"><i class="fab fa-apple"></i></div>
+          <h3 data-i18n="download_page_ios_title">iOS</h3>
+          <p data-i18n="download_page_ios_desc">حمّل تطبيق بنوصل لأجهزة الآيفون</p>
+          <a href="#" class="btn btn-primary" id="iosDownloadBtn">
+            <i class="fab fa-apple"></i> <span data-i18n="download_ios">حمله من App Store</span>
+          </a>
+          <div class="download-qr">
+            <p data-i18n="download_page_qr">امسح الرمز للتحميل</p>
+            <div class="qr-placeholder"><i class="fas fa-qrcode"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="download-features-list reveal">
+        <h3 data-i18n="download_page_features_title">مميزات التطبيق</h3>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_1">واجهة سهلة وبسيطة</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_2">تتبع مباشر على الخريطة</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_3">محادثة فورية مع الكابتن</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_4">إشعارات لحظية</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_5">محفظة إلكترونية آمنة</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_6">نظام تقييمات ومراجعات</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_7">برنامج إحالة ومكافآت</span></div>
+        <div class="download-feature-item"><i class="fas fa-check-circle"></i> <span data-i18n="download_feature_8">دعم فني على مدار الساعة</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand reveal">
+          <div class="logo"><img src="assets/images/logo.png" alt="بنوصل"></div>
+          <p data-i18n="footer_brand_desc">منصة رقمية تربط التجار بالكباتن لتقديم خدمات توصيل سريعة وموثوقة في مصر (الإسكندرية).</p>
+          <div class="footer-social">
+            <a href="https://www.facebook.com/fawrydeliveryco?locale=ar_AR" target="_blank" aria-label="Facebook"><i class="fab fa-facebook-f"></i></a>
+            <a href="https://wa.me/201033190080" target="_blank" aria-label="WhatsApp"><i class="fab fa-whatsapp"></i></a>
+            <a href="#" aria-label="Instagram"><i class="fab fa-instagram"></i></a>
+          </div>
+        </div>
+        <div class="reveal">
+          <h4 data-i18n="footer_quick_links">روابط سريعة</h4>
+          <ul class="footer-links">
+            <li><a href="index.html" data-i18n="nav_home">الرئيسية</a></li>
+            <li><a href="features.html" data-i18n="nav_features">المميزات</a></li>
+            <li><a href="about.html" data-i18n="nav_about">من نحن</a></li>
+            <li><a href="contact.html" data-i18n="nav_contact">اتصل بنا</a></li>
+            <li><a href="download.html" data-i18n="nav_download">تحميل التطبيق</a></li>
+          </ul>
+        </div>
+        <div class="reveal">
+          <h4 data-i18n="footer_support">الدعم</h4>
+          <ul class="footer-links">
+            <li><a href="contact.html" data-i18n="footer_contact_us">اتصل بنا</a></li>
+            <li><a href="privacy.html" data-i18n="footer_privacy">سياسة الخصوصية</a></li>
+            <li><a href="terms.html" data-i18n="footer_terms">الشروط والأحكام</a></li>
+          </ul>
+        </div>
+        <div class="reveal">
+          <h4 data-i18n="footer_download_app">تحميل التطبيق</h4>
+          <ul class="footer-links">
+            <li><a href="#"><i class="fab fa-google-play" style="margin-left: 8px;"></i>Google Play</a></li>
+            <li><a href="#"><i class="fab fa-apple" style="margin-left: 8px;"></i>App Store</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>© <span data-year>2026</span> — <span data-i18n="footer_copyright">جميع الحقوق محفوظة لصالح منصة بنوصل</span></span>
+        <div class="footer-bottom-links">
+          <a href="privacy.html" data-i18n="footer_privacy">سياسة الخصوصية</a>
+          <a href="terms.html" data-i18n="footer_terms">الشروط والأحكام</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="config/app-config.js"></script>
+  <script src="js/translations.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

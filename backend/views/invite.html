@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>بنوصل - دعوة صديق</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Cairo', sans-serif;
+    }
+    body {
+      background: radial-gradient(circle at top, #0d265c, #001a40, #000c24);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow-x: hidden;
+      position: relative;
+      padding: 20px;
+    }
+    .glow-ball {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      z-index: 1;
+      opacity: 0.3;
+      animation: float-bg 8s infinite alternate ease-in-out;
+    }
+    .glow-1 {
+      width: 300px;
+      height: 300px;
+      background: #004aad;
+      top: -100px;
+      right: -50px;
+    }
+    .glow-2 {
+      width: 400px;
+      height: 400px;
+      background: #F78710;
+      bottom: -150px;
+      left: -100px;
+      animation-delay: -3s;
+    }
+    @keyframes float-bg {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(30px, 40px) scale(1.1); }
+    }
+    .container {
+      width: 100%;
+      max-width: 480px;
+      background: rgba(255, 255, 255, 0.03);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 28px;
+      padding: 35px 25px;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+      z-index: 10;
+      position: relative;
+      animation: slideUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes slideUp {
+      0% { opacity: 0; transform: translateY(40px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    .logo {
+      font-size: 26px;
+      font-weight: 800;
+      color: #004aad;
+      margin-bottom: 20px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-shadow: 0 0 20px rgba(0, 74, 173, 0.3);
+    }
+    .logo span {
+      color: #F78710;
+      text-shadow: 0 0 20px rgba(247, 135, 16, 0.3);
+    }
+    .gift-box-wrapper {
+      margin: 10px auto 25px;
+      width: 130px;
+      height: 130px;
+      position: relative;
+    }
+    .gift-box {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, #F78710, #d66f00);
+      margin: 25px auto;
+      border-radius: 12px;
+      position: relative;
+      box-shadow: 0 10px 25px rgba(247, 135, 16, 0.4);
+      animation: bounce 2s infinite ease-in-out;
+    }
+    .gift-box::before {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 100%;
+      background: #004aad;
+      left: 50%;
+      transform: translateX(-50%);
+      border-radius: 4px;
+    }
+    .gift-box::after {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 16px;
+      background: #004aad;
+      top: 50%;
+      transform: translateY(-50%);
+      border-radius: 4px;
+    }
+    .gift-lid {
+      width: 90px;
+      height: 20px;
+      background: #F78710;
+      position: absolute;
+      top: -15px;
+      left: -5px;
+      border-radius: 4px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      animation: lid-float 2s infinite ease-in-out;
+    }
+    .gift-lid::before {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 100%;
+      background: #004aad;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .gift-bow {
+      width: 30px;
+      height: 30px;
+      border: 6px solid #004aad;
+      border-radius: 50% 50% 0 50%;
+      position: absolute;
+      top: -33px;
+      left: 20px;
+      transform: rotate(-45deg);
+    }
+    .gift-bow-right {
+      width: 30px;
+      height: 30px;
+      border: 6px solid #004aad;
+      border-radius: 50% 50% 50% 0;
+      position: absolute;
+      top: -33px;
+      right: 20px;
+      transform: rotate(45deg);
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-12px) rotate(2deg); }
+    }
+    @keyframes lid-float {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-7px) rotate(-2deg); }
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      background: linear-gradient(to left, #fff, #93c5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1.4;
+    }
+    .referrer-alert {
+      background: rgba(0, 74, 173, 0.15);
+      border: 1px solid rgba(0, 74, 173, 0.3);
+      padding: 10px 16px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #60a5fa;
+      margin-bottom: 20px;
+    }
+    p.description {
+      font-size: 14px;
+      color: #94a3b8;
+      line-height: 1.6;
+      margin-bottom: 25px;
+    }
+    .reward-tag {
+      background: linear-gradient(135deg, #F78710, #d66f00);
+      padding: 14px;
+      border-radius: 18px;
+      font-weight: 800;
+      font-size: 16px;
+      margin-bottom: 25px;
+      box-shadow: 0 10px 20px rgba(247, 135, 16, 0.25);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      animation: pulse-glow 2s infinite;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 10px rgba(247, 135, 16, 0.2); }
+      50% { box-shadow: 0 0 25px rgba(247, 135, 16, 0.5); }
+    }
+    .code-card {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1.5px dashed rgba(247, 135, 16, 0.4);
+      padding: 16px;
+      border-radius: 16px;
+      margin-bottom: 25px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+    .code-card:hover {
+      background: rgba(255, 255, 255, 0.02);
+      border-color: #004aad;
+      box-shadow: 0 0 15px rgba(0, 74, 173, 0.2);
+    }
+    .code-card span.label {
+      display: block;
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+    .code-card .code-value {
+      font-size: 22px;
+      font-weight: 900;
+      color: #38bdf8;
+      letter-spacing: 1px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+    }
+    .code-card .copy-hint {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 8px;
+      display: block;
+    }
+    .cta-title {
+      font-size: 14px;
+      color: #94a3b8;
+      margin-bottom: 15px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .cta-title::before, .cta-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.1);
+      margin: 0 15px;
+    }
+    .download-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .app-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: #fff;
+      color: #000;
+      padding: 12px 14px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 13px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .app-btn:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 20px rgba(0, 74, 173, 0.25);
+      background: #f8fafc;
+    }
+    .app-btn i {
+      font-size: 18px;
+    }
+    .app-btn.app-store {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .app-btn.app-store:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: #fff;
+    }
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #F78710;
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 50px;
+      font-weight: 700;
+      font-size: 14px;
+      box-shadow: 0 10px 25px rgba(247, 135, 16, 0.4);
+      z-index: 100;
+      opacity: 0;
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    @media (max-width: 480px) {
+      .container {
+        padding: 30px 20px;
+        border-radius: 24px;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      .download-buttons {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-ball glow-1"></div>
+  <div class="glow-ball glow-2"></div>
+
+  <div class="container">
+    <div class="logo">
+      <i class="fa-solid fa-truck-fast"></i> We Deliver <span>بنوصل</span>
+    </div>
+
+    <div class="gift-box-wrapper">
+      <div class="gift-box">
+        <div class="gift-bow"></div>
+        <div class="gift-bow-right"></div>
+        <div class="gift-lid"></div>
+      </div>
+    </div>
+
+    <h1>لقد تلقيت هدية ترحيبية!</h1>
+    
+    {{referrerBadge}}
+
+    <p class="description">
+      انضم الآن إلى منصة بنوصل للشحن والتوصيل السريع. احصل على رصيد فوري بمحفظتك بمجرد التسجيل وإتمام أول شحنة أو طلب توصيل!
+    </p>
+
+    <div class="reward-tag">
+      <i class="fa-solid fa-coins"></i>
+      <span>هدية بقيمة 15.00 جنيه مصري رصيد</span>
+    </div>
+
+    <div class="code-card" onclick="copyCode('{{code}}')">
+      <span class="label">اضغط لنسخ كود الدعوة</span>
+      <div class="code-value">
+        <span>{{code}}</span>
+        <i class="fa-regular fa-copy"></i>
+      </div>
+      <span class="copy-hint">انسخ الكود واستخدمه أثناء التسجيل للحصول على مكافأتك</span>
+    </div>
+
+    <div class="cta-title">حمل تطبيق بنوصل مجاناً</div>
+
+    <div class="download-buttons">
+      <a href="#" class="app-btn play-store">
+        <i class="fa-brands fa-google-play"></i>
+        <span>Google Play</span>
+      </a>
+      <a href="#" class="app-btn app-store">
+        <i class="fa-brands fa-apple"></i>
+        <span>App Store</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">
+    <i class="fa-solid fa-circle-check"></i>
+    <span>تم نسخ كود الدعوة بنجاح!</span>
+  </div>
+
+  <script>
+    function copyCode(code) {
+      navigator.clipboard.writeText(code).then(() => {
+        const toast = document.getElementById('toast');
+        toast.classList.add('show');
+        setTimeout(() => {
+          toast.classList.remove('show');
+        }, 2500);
+      }).catch(err => {
+        console.error('Failed to copy code: ', err);
+      });
+    }
+  </script>
+</body>
+</html>

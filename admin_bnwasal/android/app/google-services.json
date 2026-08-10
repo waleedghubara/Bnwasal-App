@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "142058127538",
+    "project_id": "wedeliver123",
+    "storage_bucket": "wedeliver123.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:142058127538:android:d9b867bb980bc00ed089ab",
+        "android_client_info": {
+          "package_name": "online.walidghubara.bnwasaladmin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCk9Gs2Ro-1_YHwSiMci7YZ7O8DH0JUV58"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:142058127538:android:f64038910d7a6192d089ab",
+        "android_client_info": {
+          "package_name": "online.walidghubara.wedeliver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCk9Gs2Ro-1_YHwSiMci7YZ7O8DH0JUV58"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

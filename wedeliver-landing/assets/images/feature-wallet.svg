@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 180" fill="none">
+  <circle cx="100" cy="90" r="80" fill="url(#walletBg)" opacity="0.15"/>
+  <defs>
+    <linearGradient id="walletBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- Wallet body -->
+  <rect x="30" y="55" width="140" height="90" rx="12" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+  <!-- Wallet flap -->
+  <path d="M30 55 L170 55 L170 70 L30 70 Z" fill="#2563eb" opacity="0.15"/>
+  <!-- Card 1 -->
+  <rect x="42" y="78" width="116" height="24" rx="6" fill="#334155"/>
+  <text x="50" y="93" fill="#e2e8f0" font-family="sans-serif" font-size="7">محفظة بنوصل</text>
+  <text x="120" y="93" fill="#10b981" font-family="sans-serif" font-size="9" font-weight="bold">1,250 ر.س</text>
+  <!-- Card 2 -->
+  <rect x="42" y="108" width="116" height="24" rx="6" fill="#334155"/>
+  <text x="50" y="123" fill="#94a3b8" font-family="sans-serif" font-size="7">آخر معاملة</text>
+  <text x="105" y="123" fill="#f59e0b" font-family="sans-serif" font-size="8">+ 150 ر.س</text>
+  <!-- Deposit button -->
+  <rect x="70" y="138" width="60" height="16" rx="8" fill="#10b981"/>
+  <text x="82" y="150" fill="#fff" font-family="sans-serif" font-size="7" font-weight="bold">إيداع</text>
+  <!-- Coin stack decoration -->
+  <ellipse cx="160" cy="68" rx="8" ry="4" fill="#f59e0b" opacity="0.4"/>
+  <ellipse cx="160" cy="64" rx="8" ry="4" fill="#f59e0b" opacity="0.6"/>
+  <ellipse cx="160" cy="60" rx="8" ry="4" fill="#f59e0b"/>
+  <circle cx="160" cy="60" r="2" fill="#fff" opacity="0.5"/>
+</svg>

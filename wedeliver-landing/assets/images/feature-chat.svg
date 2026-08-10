@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 180" fill="none">
+  <circle cx="100" cy="90" r="80" fill="url(#chatBg)" opacity="0.15"/>
+  <defs>
+    <linearGradient id="chatBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <!-- Chat bubble 1 (sent) -->
+  <path d="M40 50 Q40 38 52 38 L130 38 Q142 38 142 50 L142 80 Q142 92 130 92 L80 92 L55 110 L58 92 L52 92 Q40 92 40 80 Z" fill="#2563eb" opacity="0.9"/>
+  <text x="65" y="62" fill="#fff" font-family="sans-serif" font-size="7">مرحبا، الشحنة</text>
+  <text x="65" y="74" fill="#bfdbfe" font-family="sans-serif" font-size="7">وصلت؟</text>
+  <circle cx="132" cy="86" r="3" fill="#34d399" opacity="0.8"/>
+  
+  <!-- Chat bubble 2 (received) -->
+  <path d="M160 120 Q160 108 148 108 L70 108 Q58 108 58 120 L58 150 Q58 162 70 162 L120 162 L145 180 L142 162 L148 162 Q160 162 160 150 Z" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="74" y="128" fill="#e2e8f0" font-family="sans-serif" font-size="7">نعم تم التوصيل</text>
+  <text x="74" y="140" fill="#94a3b8" font-family="sans-serif" font-size="7">✅ شكراً لك</text>
+  <text x="74" y="152" fill="#94a3b8" font-family="sans-serif" font-size="6">منذ دقيقة</text>
+
+  <!-- Typing indicator dot -->
+  <circle cx="138" cy="130" r="2" fill="#3b82f6" opacity="0.6">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.2s" repeatCount="indefinite" begin="0s"/>
+  </circle>
+  <circle cx="145" cy="130" r="2" fill="#3b82f6" opacity="0.6">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.2s" repeatCount="indefinite" begin="0.2s"/>
+  </circle>
+  <circle cx="152" cy="130" r="2" fill="#3b82f6" opacity="0.6">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="1.2s" repeatCount="indefinite" begin="0.4s"/>
+  </circle>
+</svg>

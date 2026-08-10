@@ -1,0 +1,33 @@
+# robots.txt for bnwasal.com
+# منصة بنوصل لتوصيل الشحنات والطلبات
+
+User-agent: *
+Allow: /
+Allow: /index.html
+Allow: /features.html
+Allow: /about.html
+Allow: /contact.html
+Allow: /download.html
+Allow: /privacy.html
+Allow: /terms.html
+Allow: /css/
+Allow: /js/
+Allow: /assets/
+Disallow: /config/
+Disallow: /*.json$
+
+# Google
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 1
+
+# Google Image
+User-agent: Googlebot-Image
+Allow: /assets/
+
+# Bing
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 2
+
+Sitemap: https://bnwasal.com/sitemap.xml

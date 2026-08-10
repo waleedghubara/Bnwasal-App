@@ -1,0 +1,8 @@
+# key.properties.example
+# Copy this file to 'key.properties' in the same directory and fill out the values for your release keystore.
+# DO NOT commit the actual 'key.properties' file to Git/VCS! Add it to your .gitignore.
+
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=YOUR_KEY_ALIAS
+storeFile=../my-release-key.jks

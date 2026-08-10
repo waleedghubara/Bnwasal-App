@@ -1,0 +1,39 @@
+# Security & Environment
+*.pem
+wedeliver123-*.json
+.env
+!.env.example
+*.keystore
+*.jks
+key.properties
+
+# Dependencies & Build Artifacts
+node_modules/
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+dist/
+coverage/
+
+# Logs
+*.log
+backend.err
+backend.log
+logs/
+
+# Archives & Heavy Media
+*.rar
+*.zip
+*.tar.gz
+*.7z
+videos/
+
+# IDE & OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

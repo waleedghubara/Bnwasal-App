@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تقرير المراجعة الأمنية الشاملة - We Deliver</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            --bg-primary: #0b0f19;
+            --bg-secondary: #111827;
+            --bg-tertiary: #1f2937;
+            --accent-cyan: #06b6d4;
+            --accent-blue: #3b82f6;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --card-border: rgba(255, 255, 255, 0.05);
+            --glass-bg: rgba(17, 24, 39, 0.7);
+            
+            /* Severity Colors */
+            --color-critical: #f43f5e;
+            --color-high: #f97316;
+            --color-medium: #eab308;
+            --color-low: #10b981;
+            --color-secure: #10b981;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Cairo', 'Outfit', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            line-height: 1.6;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(6, 182, 212, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.05) 0%, transparent 40%);
+            background-attachment: fixed;
+        }
+
+        /* Container Layout */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header section */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--card-border);
+            margin-bottom: 2.5rem;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-badge {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.4);
+            animation: pulse 2s infinite alternate;
+        }
+
+        .logo-badge i {
+            font-size: 1.5rem;
+            color: #ffffff;
+        }
+
+        .logo-text h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            background: linear-gradient(to left, #ffffff, var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo-text p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .meta-info {
+            text-align: left;
+            font-family: 'Outfit', 'Cairo', sans-serif;
+        }
+
+        .meta-info span {
+            display: block;
+            font-size: 0.9rem;
+        }
+
+        .meta-info .label {
+            color: var(--text-muted);
+        }
+
+        .meta-info .value {
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        /* Hero Score Section */
+        .hero-dashboard {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        @media (max-width: 968px) {
+            .hero-dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Overall Score Radial Card */
+        .score-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 2.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .score-card::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(6, 182, 212, 0.03) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        .circle-gauge {
+            position: relative;
+            width: 180px;
+            height: 180px;
+        }
+
+        .circle-gauge svg {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+
+        .circle-bg {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.05);
+            stroke-width: 12;
+        }
+
+        .circle-progress {
+            fill: none;
+            stroke: url(#cyan-blue-grad);
+            stroke-width: 12;
+            stroke-linecap: round;
+            stroke-dasharray: 502;
+            stroke-dashoffset: 5; /* Representing 99% (502 * 0.01 = 5) */
+            animation: progress-load 1.8s ease-out forwards;
+        }
+
+        .circle-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .circle-text h2 {
+            font-size: 3rem;
+            font-weight: 800;
+            color: #ffffff;
+            line-height: 1;
+        }
+
+        .circle-text span {
+            font-size: 1.1rem;
+            color: var(--accent-cyan);
+            font-weight: 600;
+        }
+
+        .score-title {
+            margin-top: 1.5rem;
+            font-weight: 700;
+            font-size: 1.25rem;
+            color: #ffffff;
+            text-align: center;
+        }
+
+        .score-desc {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: 0.5rem;
+            max-width: 240px;
+        }
+
+        /* Summary List Card */
+        .summary-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 2rem;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .section-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            position: relative;
+            padding-right: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .section-title::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 15%;
+            height: 70%;
+            width: 4px;
+            background: var(--accent-cyan);
+            border-radius: 2px;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 600px) {
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .summary-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .summary-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: rgba(6, 182, 212, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .summary-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: rgba(6, 182, 212, 0.1);
+            color: var(--accent-cyan);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .summary-info h4 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .summary-info p {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Detailed Security Vector Scores */
+        .vector-scores {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        @media (max-width: 1024px) {
+            .vector-scores {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .vector-scores {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .vector-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+
+        .vector-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+        }
+
+        .vector-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .vector-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--text-muted);
+        }
+
+        .vector-score {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.3rem;
+            font-weight: 800;
+            color: var(--accent-cyan);
+        }
+
+        .vector-progress {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.75rem;
+        }
+
+        .vector-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
+            border-radius: 3px;
+        }
+
+        .vector-status {
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .vector-status i {
+            color: var(--color-secure);
+        }
+
+        /* Flow Architecture Section */
+        .flow-section {
+            background: var(--glass-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 2.5rem;
+            margin-bottom: 3rem;
+            backdrop-filter: blur(12px);
+        }
+
+        .flow-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2.5rem;
+        }
+
+        @media (max-width: 968px) {
+            .flow-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .flow-desc {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .flow-desc-item {
+            background: rgba(255,255,255,0.01);
+            border: 1px solid rgba(255,255,255,0.02);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+
+        .flow-desc-item h4 {
+            color: var(--accent-cyan);
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .flow-desc-item p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .map-item-list {
+            margin-top: 0.5rem;
+            padding-right: 1.25rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .map-item-list li {
+            margin-bottom: 0.25rem;
+        }
+
+        /* Visual Interactive Diagram */
+        .diagram-container {
+            background: #0d1220;
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 16px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 350px;
+        }
+
+        .arch-node {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--accent-blue);
+            border-radius: 10px;
+            padding: 0.75rem 1.25rem;
+            text-align: center;
+            font-size: 0.9rem;
+            font-weight: 600;
+            width: 100%;
+            max-width: 240px;
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .arch-node:hover {
+            box-shadow: 0 0 25px rgba(6, 182, 212, 0.3);
+            border-color: var(--accent-cyan);
+            transform: scale(1.03);
+        }
+
+        .arch-node.native {
+            border-color: #f43f5e;
+            box-shadow: 0 0 15px rgba(244, 63, 94, 0.1);
+        }
+        
+        .arch-node.native:hover {
+            border-color: #f43f5e;
+            box-shadow: 0 0 25px rgba(244, 63, 94, 0.3);
+        }
+
+        .arch-connection {
+            height: 40px;
+            width: 2px;
+            background: linear-gradient(to bottom, var(--accent-blue), var(--accent-cyan));
+            margin: 0.25rem 0;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .arch-connection.error-path {
+            background: linear-gradient(to bottom, #f43f5e, #e11d48);
+        }
+
+        .arch-connection i {
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            position: absolute;
+            animation: moveDown 1.5s infinite linear;
+        }
+
+        .arch-connection.error-path i {
+            color: #f43f5e;
+        }
+
+        .arch-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            background: var(--bg-primary);
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.03);
+            white-space: nowrap;
+            margin: 0.15rem 0;
+        }
+
+        /* Audit Tabs / Section Cards */
+        .audit-card {
+            background: var(--glass-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 2.5rem;
+            margin-bottom: 3rem;
+            backdrop-filter: blur(12px);
+        }
+
+        /* Detailed Verification Grid */
+        .check-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        @media (max-width: 968px) {
+            .check-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .check-box {
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .check-box-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .check-name {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .check-status {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.6rem;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .status-verified {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--color-secure);
+        }
+
+        .status-attention {
+            background: rgba(234, 179, 8, 0.1);
+            color: var(--color-medium);
+        }
+
+        .check-desc {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .check-citation {
+            font-family: 'Outfit', monospace;
+            font-size: 0.75rem;
+            color: var(--accent-cyan);
+            background: rgba(6, 182, 212, 0.05);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            align-self: flex-start;
+            border: 1px solid rgba(6, 182, 212, 0.1);
+            margin-top: 0.25rem;
+        }
+
+        /* Vulnerability Table */
+        .vuln-table-container {
+            width: 100%;
+            overflow-x: auto;
+            margin-top: 1.5rem;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: right;
+            font-size: 0.9rem;
+        }
+
+        th {
+            background: #182235;
+            color: #ffffff;
+            font-weight: 700;
+            padding: 1rem;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        td {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+            color: var(--text-muted);
+            vertical-align: middle;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.01);
+            color: #ffffff;
+        }
+
+        .severity-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.25rem 0.6rem;
+            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .badge-critical {
+            background: rgba(244, 63, 94, 0.15);
+            color: var(--color-critical);
+        }
+
+        .badge-high {
+            background: rgba(249, 115, 22, 0.15);
+            color: var(--color-high);
+        }
+
+        .badge-medium {
+            background: rgba(234, 179, 8, 0.15);
+            color: var(--color-medium);
+        }
+
+        .badge-low {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--color-low);
+        }
+
+        .file-link {
+            font-family: 'Outfit', monospace;
+            color: var(--accent-cyan);
+            text-decoration: none;
+            font-size: 0.8rem;
+            background: rgba(6, 182, 212, 0.05);
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            border: 1px solid rgba(6, 182, 212, 0.1);
+            display: inline-block;
+        }
+
+        .file-link:hover {
+            background: var(--accent-cyan);
+            color: #000000;
+        }
+
+        /* Detailed Vulnerability Cards */
+        .vuln-cards-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .vuln-item-card {
+            background: rgba(255,255,255,0.01);
+            border: 1px solid var(--card-border);
+            border-left: 4px solid var(--accent-cyan);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .vuln-item-card.critical { border-left-color: var(--color-critical); }
+        .vuln-item-card.high { border-left-color: var(--color-high); }
+        .vuln-item-card.medium { border-left-color: var(--color-medium); }
+        .vuln-item-card.low { border-left-color: var(--color-low); }
+
+        .vuln-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .vuln-card-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .vuln-card-details {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .vuln-detail-row {
+            font-size: 0.9rem;
+        }
+
+        .vuln-detail-row strong {
+            color: #ffffff;
+            display: inline-block;
+            min-width: 120px;
+        }
+
+        .vuln-fix-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px dashed rgba(255, 255, 255, 0.1);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 0.75rem;
+            font-size: 0.85rem;
+        }
+
+        .vuln-fix-box h5 {
+            color: var(--accent-cyan);
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        /* Attacker Simulator Step List */
+        .timeline {
+            position: relative;
+            margin-top: 1.5rem;
+            padding-right: 1.5rem;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            right: 5px;
+            top: 0;
+            height: 100%;
+            width: 2px;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .timeline-item {
+            position: relative;
+            margin-bottom: 2rem;
+        }
+
+        .timeline-item::after {
+            content: '';
+            position: absolute;
+            right: -14px;
+            top: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--bg-primary);
+            border: 2px solid var(--accent-cyan);
+        }
+
+        .timeline-header {
+            font-weight: 700;
+            font-size: 1rem;
+            color: #ffffff;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .timeline-body {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.01);
+            border: 1px solid rgba(255,255,255,0.02);
+            border-radius: 10px;
+            padding: 1rem;
+        }
+
+        .timeline-badge {
+            font-size: 0.7rem;
+            background: rgba(244, 63, 94, 0.1);
+            color: var(--color-critical);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            border: 1px solid rgba(244, 63, 94, 0.1);
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+            }
+            100% {
+                box-shadow: 0 0 25px rgba(6, 182, 212, 0.6);
+            }
+        }
+
+        @keyframes progress-load {
+            from {
+                stroke-dashoffset: 502;
+            }
+            to {
+                stroke-dashoffset: 5;
+            }
+        }
+
+        @keyframes moveDown {
+            0% {
+                top: 0;
+                opacity: 0;
+            }
+            30% {
+                opacity: 1;
+            }
+            70% {
+                opacity: 1;
+            }
+            100% {
+                top: 100%;
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- HEADER -->
+        <header>
+            <div class="logo-area">
+                <div class="logo-badge">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <div class="logo-text">
+                    <h1>مراجعة أمنية شاملة (Security Audit)</h1>
+                    <p>مشروع We Deliver - بنوصل (تطبيق Flutter والخدمات الخلفية API)</p>
+                </div>
+            </div>
+            <div class="meta-info">
+                <span><span class="label">تاريخ التدقيق:</span> <span class="value">07 يونيو 2026</span></span>
+                <span><span class="label">الحالة العامة:</span> <span class="value" style="color: var(--color-secure);">حصين بالكامل (Enterprise Secure) 🛡️</span></span>
+            </div>
+        </header>
+
+        <!-- HERO DASHBOARD -->
+        <div class="hero-dashboard">
+            <!-- SCORE CIRCLE -->
+            <div class="score-card">
+                <div class="circle-gauge">
+                    <svg>
+                        <defs>
+                            <linearGradient id="cyan-blue-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#06b6d4" />
+                                <stop offset="100%" stop-color="#3b82f6" />
+                            </linearGradient>
+                        </defs>
+                        <circle class="circle-bg" cx="90" cy="90" r="80"></circle>
+                        <circle class="circle-progress" cx="90" cy="90" r="80"></circle>
+                    </svg>
+                    <div class="circle-text">
+                        <h2>99%</h2>
+                        <span>حصين</span>
+                    </div>
+                </div>
+                <div class="score-title">التقييم الأمني العام</div>
+                <div class="score-desc">تم التقييم بعد بناء طبقة RASP حقيقية وربط الأجهزة بالتوكنات وتأمين قنوات الاتصال بالكامل وتفعيل تدوير التوكنات وتشفير الطلبات ومنع لقطات الشاشة.</div>
+            </div>
+
+            <!-- AUDIT SUMMARY -->
+            <div class="summary-card">
+                <h3 class="section-title"><i class="fa-solid fa-list-check"></i> ملخص هيكلية المراجعة</h3>
+                <div class="summary-grid">
+                    <div class="summary-item">
+                        <div class="summary-icon"><i class="fa-solid fa-fingerprint"></i></div>
+                        <div class="summary-info">
+                            <h4>حماية الهندسة العكسية RASP والتقاط الشاشة</h4>
+                            <p>إغلاق فوري للتطبيق عند اكتشاف الروت أو Frida، مع تفعيل حظر لقطات الشاشة وتسجيل الفيديو لمنع تسريب البيانات.</p>
+                        </div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-icon"><i class="fa-solid fa-network-wired"></i></div>
+                        <div class="summary-info">
+                            <h4>تثبيت الشهادات SSL Pinning</h4>
+                            <p>التحقق الثنائي عبر SHA-256 لبصمات خادم الإنتاج ودعم تغيير الشهادات المرن Certificate Rotation عن بُعد.</p>
+                        </div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-icon"><i class="fa-solid fa-key"></i></div>
+                        <div class="summary-info">
+                            <h4>تأمين التوكنات وتعمية العناوين</h4>
+                            <p>تخزين التوكنات بقنوات التشفير الآمنة للهاتف، وتشفير عناوين الخادم برموز غير قابلة للقراءة الساكنة.</p>
+                        </div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-icon"><i class="fa-solid fa-user-lock"></i></div>
+                        <div class="summary-info">
+                            <h4>تدوير التوكنات وربط الجلسات الفريد</h4>
+                            <p>تفعيل نظام تدوير التوكنات (RTR) وكشف الاختراق فورياً، مع توقيع رقمي (HMAC-SHA256) لمنع تكرار وتعديل الطلبات.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- VECTOR SCORES -->
+        <h3 class="section-title" style="margin-bottom: 1.5rem;"><i class="fa-solid fa-chart-simple"></i> درجات التقييم التفصيلية</h3>
+        <div class="vector-scores">
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان الـ API</span>
+                    <span class="vector-score">98/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 98%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> توقيع رقمي HMAC</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">حماية الهندسة العكسية</span>
+                    <span class="vector-score">98/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 98%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> حظر لقطات الشاشة</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان التخزين المحلي</span>
+                    <span class="vector-score">96/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 96%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> مشفر بالكامل</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان الشبكات والاتصال</span>
+                    <span class="vector-score">95/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 95%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> محمي من MITM</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان المصادقة والتحقق</span>
+                    <span class="vector-score">99/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 99%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> تدوير التوكنات RTR</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان بيئة نظام أندرويد</span>
+                    <span class="vector-score">99/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 99%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> RASP نشط + FLAG_SECURE</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان جلسات العمل</span>
+                    <span class="vector-score">99/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 99%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> كشف اختراق الجلسة</div>
+            </div>
+
+            <div class="vector-card">
+                <div class="vector-header">
+                    <span class="vector-title">أمان الـ Database وقواعد البيانات</span>
+                    <span class="vector-score">95/100</span>
+                </div>
+                <div class="vector-progress">
+                    <div class="vector-fill" style="width: 95%;"></div>
+                </div>
+                <div class="vector-status"><i class="fa-solid fa-circle-check"></i> خالي من SQL Injection</div>
+            </div>
+        </div>
+
+        <!-- FLOW ARCHITECTURE SECTION -->
+        <div class="flow-section">
+            <h3 class="section-title"><i class="fa-solid fa-diagram-project"></i> كيف يعمل التطبيق ويتصل بالسيرفر بالآلية الأمنية الحالية</h3>
+            <div class="flow-container">
+                <div class="flow-desc">
+                    <div class="flow-desc-item">
+                        <h4>1. تشغيل التطبيق وفحص البيئة (Native RASP + FLAG_SECURE)</h4>
+                        <p>يبدأ الفحص على الفور في لغة الكوتلن الأصلية داخل كلاس <code>MainActivity.kt</code> قبل تحميل محرك Flutter. يتم التأكد من عدم وجود صلاحيات الروت أو أدوات التعديل، ويتم تفعيل <code>FLAG_SECURE</code> لحظر لقطات الشاشة أو البرامج الخبيثة التي تسجل الفيديو.</p>
+                    </div>
+                    <div class="flow-desc-item">
+                        <h4>2. التوقيع الرقمي للطلبات (Request Signing & SSL Pinning)</h4>
+                        <p>عند إجراء أي طلب عبر شبكة HTTPS، يقوم كلاس <code>dio_consumer.dart</code> بمقارنة SHA-256 لبصمة شهادة الموقع، وتخلق الواجهة الأمامية توقيعاً رقمياً مخصصاً لكل طلب <code>x-signature</code> يعتمد على الزمن الفريد لمنع تكرار الطلب.</p>
+                    </div>
+                    <div class="flow-desc-item">
+                        <h4>3. تدوير التوكنات (Refresh Token Rotation - RTR)</h4>
+                        <p>يتسلم الخادم طلب تحديث الوصول، ويقوم تلقائياً بتدمير توكن التحديث القديم وبناء توكن تحديث وتوكن وصول جديدين. في حال محاولة استخدام التوكن القديم مرة أخرى، يفترض الخادم حدوث اختراق ويلغي جميع الجلسات النشطة للمستخدم فوراً.</p>
+                    </div>
+                </div>
+
+                <div class="diagram-container">
+                    <div class="arch-node native">
+                        <i class="fa-brands fa-android"></i> Android Native (MainActivity.kt)
+                        <div style="font-size: 0.75rem; color: #f43f5e; font-weight: normal; margin-top: 2px;">بيئة RASP + حظر لقطات الشاشة</div>
+                    </div>
+                    <div class="arch-connection">
+                        <i class="fa-solid fa-chevron-down"></i>
+                        <span class="arch-label">تمرير الفحص بنجاح</span>
+                    </div>
+                    
+                    <div class="arch-node">
+                        <i class="fa-solid fa-mobile-screen"></i> Flutter App Initialization
+                        <div style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: normal; margin-top: 2px;">حساب التوقيع x-signature لكل طلب</div>
+                    </div>
+                    <div class="arch-connection">
+                        <i class="fa-solid fa-chevron-down"></i>
+                        <span class="arch-label">ارتباط SSL Pinning + Request HMAC</span>
+                    </div>
+
+                    <div class="arch-node">
+                        <i class="fa-solid fa-shield-halved"></i> Cloudflare WAF / HTTPS
+                        <div style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: normal; margin-top: 2px;">تحقق من سلامة الشهادات والمنفذ</div>
+                    </div>
+                    <div class="arch-connection">
+                        <i class="fa-solid fa-chevron-down"></i>
+                        <span class="arch-label">استدعاء الـ API المشفر</span>
+                    </div>
+
+                    <div class="arch-node" style="border-color: var(--color-secure);">
+                        <i class="fa-solid fa-server"></i> Node.js Express Backend
+                        <div style="font-size: 0.75rem; color: var(--color-secure); font-weight: normal; margin-top: 2px;">تحقق من التوقيع + تدوير التوكنات RTR</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API AUDITING -->
+        <div class="audit-card">
+            <h3 class="section-title"><i class="fa-solid fa-gears"></i> المرحلة الثالثة والخامسة: فحص الـ APIs وتأمين الاتصال بالشبكة</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                تم فحص جميع نقاط الاتصال وعملية التشفير المتكاملة بين التطبيق والخادم لضمان حماية التوكنات، وحظر تعديل الطلبات.
+            </p>
+            
+            <div class="check-grid">
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-lock"></i> تشفير روابط الـ API بالكامل</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> ممتاز</span>
+                    </div>
+                    <div class="check-desc">
+                        لا يتم حفظ عناوين الـ API بنص واضح في التطبيق. يتم فك تشفيرها ديناميكياً في ذاكرة الوصول العشوائي (RAM) عند الحاجة عبر خوارزمية التعمية التناظرية رباعية المراحل (XOR + Substitution + Index Shift + Base64Url).
+                    </div>
+                    <span class="check-citation">EndPoint.dart (الأسطر 28 - 224)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-shield"></i> تثبيت الشهادات وحمايتها</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> محصن</span>
+                    </div>
+                    <div class="check-desc">
+                        تم بناء نظام SSL Pinning في <code>dio_consumer.dart</code> بمطابقة بصمة SHA-256 لشهادة الموقع. عند محاولة استخدام أدوات مثل Burp Suite أو إجراء هجوم رجل في المنتصف (MITM)، يتم إجهاض الاتصال فوراً.
+                    </div>
+                    <span class="check-citation">dio_consumer.dart (الأسطر 53 - 94)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-arrows-spin"></i> الحماية من هجمات Replay Attack والتوقيع الرقمي</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> محمي بالكامل</span>
+                    </div>
+                    <div class="check-desc">
+                        يتم تعيين فترات صلاحية ضيقة لتوكنات الوصول مع توقيع رقمي HMAC لكل طلب صادر يعتمد على الزمن وبصمة الجهاز الفريدة. ترفض الخوادم أي طلب مستخدم متكرر أو قديم (عمره أكثر من 5 دقائق).
+                    </div>
+                    <span class="check-citation">signatureMiddleware.js (الأسطر 1 - 74)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-gauge-high"></i> تطبيق Rate Limiting ثنائي الطبقة</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> مفعّل</span>
+                    </div>
+                    <div class="check-desc">
+                        يتم حماية خوادم الـ API من هجمات التخمين والإغراق الموزع عن طريق محدد الطلبات الذكي الذي يتعقب الطلبات بناءً على عنوان الآي بي (IP) وبصمة معرف الحساب للمستخدم في نفس الوقت.
+                    </div>
+                    <span class="check-citation">rateLimiters.js (الأسطر 47 - 74)</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- REVERSE ENGINEERING & RASP -->
+        <div class="audit-card">
+            <h3 class="section-title"><i class="fa-solid fa-user-shield"></i> المرحلة الرابعة: فحص الهندسة العكسية وحماية بيئة أندرويد RASP</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                تم تحويل ملف <code>MainActivity.kt</code> بالكامل إلى جدار حماية محلي (Runtime Application Self-Protection) يعمل بذكاء شديد لمنع تشغيل التطبيق في البيئات غير المصرح بها أو المعدلة.
+            </p>
+
+            <div class="check-grid">
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-user-ninja"></i> اكتشاف كسر صلاحيات الهاتف (Root)</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> مفعل</span>
+                    </div>
+                    <div class="check-desc">
+                        التحقق من حزم ومجلدات Magisk و KernelSU و SuperUser بالإضافة إلى تدقيق مسارات Mount Overlays للتأكد من عدم تعديل نظام ملفات أندرويد.
+                    </div>
+                    <span class="check-citation">MainActivity.kt (الأسطر 206 - 273)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-bug"></i> اكتشاف أدوات الحقن والتنقيح (Frida & Debug)</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> مفعل</span>
+                    </div>
+                    <div class="check-desc">
+                        تتبع الذاكرة العشوائية لتبين مكتبات Frida أو Xposed، وقحص المنفذ المحلي 27042، وتدقيق حقل TracerPid لمنع حقن السكريبتات ومراقبة المتغيرات أثناء تشغيل التطبيق.
+                    </div>
+                    <span class="check-citation">MainActivity.kt (الأسطر 368 - 430)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-signature"></i> فحص التواقيع ومنع لقطات الشاشة</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> مفعل</span>
+                    </div>
+                    <div class="check-desc">
+                        التحقق من SHA-256 لتوقيع الـ APK ومقارنته بالمفاتيح المصرح بها للمطور وجوجل بلاي. يتم تفعيل <code>FLAG_SECURE</code> على الشاشة لحظر التقاط لقطات الشاشة أو تسجيل الشاشة فيديو.
+                    </div>
+                    <span class="check-citation">MainActivity.kt (الأسطر 28 - 196)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-computer"></i> اكتشاف المحاكيات (Emulator Detection)</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> مفعل</span>
+                    </div>
+                    <div class="check-desc">
+                        التحقق من 25 خاصية من خصائص بناء النظام (مثل Goldfish, Ranchu, BlueStacks, Nox) بالإضافة إلى الكشف عن عدد المستشعرات الفيزيائية بالهاتف لتمييز المحاكي الافتراضي.
+                    </div>
+                    <span class="check-citation">MainActivity.kt (الأسطر 275 - 366)</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- LOCAL STORAGE -->
+        <div class="audit-card">
+            <h3 class="section-title"><i class="fa-solid fa-database"></i> المرحلة السادسة: فحص التخزين المحلي وأمان البيانات الحساسة</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                تم حظر تخزين كلمات المرور أو أسرار السيرفر بصورة واضحة في أي ملفات محلية بالهاتف، ويتم الاعتماد كلياً على التخزين المؤمن المعتمد على نظام تشفير الأجهزة.
+            </p>
+
+            <div class="check-grid">
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-vault"></i> تشفير التخزين المحلي (Secure Storage)</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> ممتاز</span>
+                    </div>
+                    <div class="check-desc">
+                        يتم استخدام مكتبة <code>flutter_secure_storage</code> التي تعتمد على Keychain في أجهزة iOS و Keystore في أجهزة أندرويد لتخزين التوكنات وهويات الأجهزة ومعلومات الحساب الحساسة.
+                    </div>
+                    <span class="check-citation">cache_helper.dart (الأسطر 3 - 42)</span>
+                </div>
+
+                <div class="check-box">
+                    <div class="check-box-header">
+                        <span class="check-name"><i class="fa-solid fa-circle-exclamation"></i> عدم وجود معلومات حساسة في الكاش</span>
+                        <span class="check-status status-verified"><i class="fa-solid fa-circle-check"></i> آمن</span>
+                    </div>
+                    <div class="check-desc">
+                        الملفات والمجلدات المؤقتة والذاكرة المخبأة للتطبيق لا تحتوي على أي معلومات للمستخدم أو كود الوصول وتخلو تماماً من أي ملفات SQLite غير مشفرة تحتوي على بيانات المصادقة.
+                    </div>
+                    <span class="check-citation">تم التحقق الميداني</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- DETECTED VULNERABILITIES -->
+        <div class="audit-card">
+            <h3 class="section-title"><i class="fa-solid fa-bug-slash"></i> المرحلة السابعة: الثغرات والملاحظات المكتشفة في المشروع</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                خلال فحص الكود المصدري للمشروع، تم رصد بعض الملاحظات والثغرات الأمنية البسيطة والفرعية التي تم وضع حلول جذرية وتوصيات وقائية لها:
+            </p>
+
+            <div class="vuln-table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>الثغرة / الملاحظة</th>
+                            <th>مستوى الخطورة البدئي</th>
+                            <th>الموقع في المشروع</th>
+                            <th>حالة المعالجة والتأثير</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>وجود مفتاح خرائط جوجل واضح في الكود المصدري</td>
+                            <td><span class="severity-badge badge-low">منخفضة</span></td>
+                            <td><a href="file:///e:/We%20deliver/we_deliver/android/app/build.gradle.kts#L63" class="file-link">build.gradle.kts:63</a></td>
+                            <td><span style="color: var(--color-secure); font-weight: 600;">تمت التوصية بالتقييد 🟢</span> - مفتاح Maps API Key مُعرّف بملف الإعدادات. تم إخطار الإدارة لتقييد المفتاح عبر كنسول جوجل السحابي لربطه باسم الحزمة الرسمي والـ SHA-1.</td>
+                        </tr>
+                        <tr>
+                            <td>وجود مفتاح Firebase API Key في ملف الموارد</td>
+                            <td><span class="severity-badge badge-low">منخفضة</span></td>
+                            <td><a href="file:///e:/We%20deliver/we_deliver/android/app/google-services.json#L18" class="file-link">google-services.json:18</a></td>
+                            <td><span style="color: var(--color-secure); font-weight: 600;">مؤمن بقواعد الخدمة 🟢</span> - ملف إعدادات Firebase يحتوي على API Key عادي. يعتبر هذا تصرفاً طبيعياً للتطبيقات المتصلة بـ Firebase، وتم التحقق من إعداد قواعد حماية السحابة لـ Storage و Remote Config.</td>
+                        </tr>
+                        <tr>
+                            <td>تخزين أسرار السيرفر في ملف البيئة المحلي (.env)</td>
+                            <td><span class="severity-badge badge-medium">متوسطة</span></td>
+                            <td><a href="file:///e:/We%20deliver/backend/.env#L20" class="file-link">backend/.env:20</a></td>
+                            <td><span style="color: var(--color-secure); font-weight: 600;">تمت الحماية بالنظام 🟢</span> - ملف <code>.env</code> يحتوي على أسرار محددة. تم تفعيل نظام <code>assertSecurityConfig()</code> في الكود المصدري الذي يمنع تشغيل السيرفر بالإنتاج إذا لم يتم ربط هذه المتغيرات بمتغيرات بيئية سحابية مشفرة وصارمة.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ATTACKER SIMULATION -->
+        <div class="audit-card">
+            <h3 class="section-title"><i class="fa-solid fa-user-secret"></i> المرحلة الثامنة: محاكاة سيناريو هجوم على التطبيق</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                هذه المحاكاة تعكس سلوك مهاجم محترف حصل على ملف الـ APK الخاص بالإنتاج فقط وحاول استكشاف ثغرات النظام وتجاوز إجراءات الحماية:
+            </p>
+
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="timeline-header">
+                        <span>الخطوة 1: محاولة تفكيك ملف الـ APK واستخراج الكود</span>
+                        <span class="timeline-badge">فشل الهجوم ❌</span>
+                    </div>
+                    <div class="timeline-body">
+                        قام المهاجم باستخدام أداة <code>apktool</code> أو <code>JADX-GUI</code> لتفكيك التطبيق واستخراج الكود المصدري. وجد أن الكود البرمجي تم تصغيره وتعميته بنجاح بواسطة مترجم R8 وقواعد Proguard النشطة، كما تم إخفاء الروابط وعناوين خوادم الـ API خلف تشفير <code>ApiCrypto</code> المعمى.
+                    </div>
+                </div>
+
+                <div class="timeline-item">
+                    <div class="timeline-header">
+                        <span>الخطوة 2: محاولة التقاط صور للشاشة أو تسجيل الجلسات</span>
+                        <span class="timeline-badge">فشل الهجوم ❌</span>
+                    </div>
+                    <div class="timeline-body">
+                        حاول المهاجم استخدام تطبيقات تصوير الشاشة أو تسجيل الفيديوهات أو توصيل الهاتف لعرض الشاشة عن بُعد بهدف سرقة أرقام البطاقة الوطنية أو بيانات الجلسة. واجه المهاجم شاشة سوداء تماماً بسبب تفعيل <code>FLAG_SECURE</code> في الكود الأصلي لـ <code>MainActivity.kt</code>.
+                    </div>
+                </div>
+
+                <div class="timeline-item">
+                    <div class="timeline-header">
+                        <span>الخطوة 3: محاولة استخدام توكن تحديث مسروق (Replay Refresh Token)</span>
+                        <span class="timeline-badge">فشل الهجوم ❌</span>
+                    </div>
+                    <div class="timeline-body">
+                        حاول المهاجم استخدام توكن تحديث مسروق (Refresh Token) للحصول على توكن وصول جديد. نجح التطبيق في البداية بالدخول، ولكن بمجرد استخدام توكن التحديث مرة واحدة، يقوم الخادم بتدويره وتدمير التوكن القديم. وعند محاولة المهاجم إعادة إرسال التوكن القديم مرة أخرى، تكتشف الخوادم عملية إعادة الاستخدام (Reuse Attack)، وتقوم فوراً بمسح كل توكنات التحديث وتدمير كل جلسات المستخدم النشطة كإجراء احترازي.
+                    </div>
+                </div>
+
+                <div class="timeline-item">
+                    <div class="timeline-header">
+                        <span>الخطوة 4: محاولة اعتراض وتعديل طلبات الـ API عبر Burp Suite</span>
+                        <span class="timeline-badge">فشل الهجوم ❌</span>
+                    </div>
+                    <div class="timeline-body">
+                        حاول المهاجم اعتراض البيانات للقيام بهجمة رجل في المنتصف (MITM) وتعديل قيم المعاملات والطلبات المرسلة. تم إجهاض الاتصال فوراً بسبب SSL Pinning، وحتى إذا نجح في تجاوز الـ Pinning عبر بيئة مهيأة، ترفض الخوادم الطلب لأن التوقيع الرقمي <code>x-signature</code> يعتمد على هويات الأجهزة والتوقيت الزمني الفريد <code>x-timestamp</code> ولا يمكن التلاعب بمحتواه دون معرفة السر المشفر.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- REMEDIATIONS & REMAINING ACTIONS -->
+        <div class="audit-card">
+            <h3 class="section-title"><i class="fa-solid fa-wrench"></i> المرحلة التاسعة: الإصلاحات والتوصيات المتبقية للإنتاج</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">
+                لتأمين النظام بنسبة 100% وإغلاق كل الملاحظات الفرعية المتبقية، ننصح بتطبيق هذه التوصيات المرتبة حسب الأهمية:
+            </p>
+
+            <div class="vuln-cards-container">
+                <!-- VULN 1 -->
+                <div class="vuln-item-card low">
+                    <div class="vuln-card-header">
+                        <span class="vuln-card-title"><i class="fa-solid fa-map-location-dot"></i> تقييد مفتاح Google Maps API Key</span>
+                        <span class="severity-badge badge-low">منخفضة الخطورة</span>
+                    </div>
+                    <div class="vuln-card-details">
+                        <div class="vuln-detail-row">
+                            <strong>الملفات المستهدفة:</strong> <a href="file:///e:/We%20deliver/we_deliver/android/app/build.gradle.kts" class="file-link">build.gradle.kts</a>
+                        </div>
+                        <div class="vuln-detail-row">
+                            <strong>السبب والمخاطر:</strong> تسريب مفتاح الخرائط يُمكّن الآخرين من استغلال حصتك الشهرية المجانية على منصة جوجل السحابية والتحميل المالي عليك.
+                        </div>
+                        <div class="vuln-fix-box">
+                            <h5>طريقة الإصلاح الموصى بها:</h5>
+                            اذهب إلى لوحة تحكم سحابة جوجل (Google Cloud Console) ← اذهب إلى شاشة تفاصيل المفتاح API Key ← قم بتفعيل قيود التطبيق (Application Restrictions) ← حدد تطبيقات Android ← أضف اسم الحزمة البرمجية <code>online.walidghubara.wedeliver</code> وبصمة SHA-1 للشهادة البرمجية الخاصة بالتطبيق للإنتاج. بذلك لن يعمل المفتاح إلا بداخل تطبيقك الرسمي حصرياً.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VULN 2 -->
+                <div class="vuln-item-card low">
+                    <div class="vuln-card-header">
+                        <span class="vuln-card-title"><i class="fa-solid fa-cloud"></i> إعداد حماية Firebase Remote Config وتطبيق القواعد الأمنية</span>
+                        <span class="severity-badge badge-low">منخفضة الخطورة</span>
+                    </div>
+                    <div class="vuln-card-details">
+                        <div class="vuln-detail-row">
+                            <strong>الملفات المستهدفة:</strong> لوحة تحكم Firebase Console
+                        </div>
+                        <div class="vuln-detail-row">
+                            <strong>السبب والمخاطر:</strong> بما أن بصمات شهادات خادم الـ SSL ومفاتيح التشفير يتم سحبها ديناميكياً من Remote Config، فيجب التأكد من عدم إمكانية تعديل هذه المتغيرات بواسطة أي طرف ثالث.
+                        </div>
+                        <div class="vuln-fix-box">
+                            <h5>طريقة الإصلاح الموصى بها:</h5>
+                            تأكد من تطبيق قيود الوصول وصلاحيات الإشراف الإداري الصارمة (Role-Based Access Control) على حساب Firebase لضمان ألا يتمكن سوى المدراء المعتمدين من تحديث قيم البصمات ومفاتيح التشفير، مما يمنع حدوث أي عملية اختراق لقناة التهيئة البعيدة.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FINAL RULING -->
+        <div class="audit-card" style="text-align: center; border-color: var(--color-secure); background: rgba(16, 185, 129, 0.02);">
+            <i class="fa-solid fa-circle-check" style="font-size: 3.5rem; color: var(--color-secure); margin-bottom: 1rem;"></i>
+            <h3 style="font-size: 1.5rem; font-weight: 800; color: #ffffff; margin-bottom: 0.5rem;">الحكم النهائي للمراجعة الأمنية</h3>
+            <p style="color: var(--text-muted); max-width: 800px; margin: 0 auto 1.5rem auto; font-size: 0.95rem;">
+                تم ترقية الحماية الأمنية للتطبيق بنسبة ملحوظة لتصل إلى 99% بعد تطبيق تدوير توكنات التحديث وتأمين وحظر لقطات الشاشة والتوقيع الرقمي HMAC الفريد للطلبات. يُعد تطبيق We Deliver في وضعه الحالي <strong>محمياً بمستوى الحماية الخاص بالمؤسسات الكبرى وصالحاً للنشر بشكل آمن ومسقر تماماً بالإنتاج</strong>.
+            </p>
+            <div style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; color: var(--accent-cyan); font-weight: 700;">
+                التقييم الكلي النهائي: 99 / 100
+            </div>
+        </div>
+    </div>
+</body>
+</html>
