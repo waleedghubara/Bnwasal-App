@@ -15,6 +15,7 @@ build/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
+.gradle/
 dist/
 coverage/
 
