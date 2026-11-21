@@ -1,4 +1,6 @@
+const bcrypt = require('bcryptjs');
 const { getPool } = require('../config/db');
+const { logAudit } = require('../utils/auditLogger');
 
 const getCaptains = async (req, res, next) => {
   try {
@@ -33,18 +35,85 @@ const getCaptains = async (req, res, next) => {
               (SELECT COUNT(*) FROM shipments WHERE captainId = u.id) as totalShipments,
               (SELECT COUNT(*) FROM orders WHERE captainId = u.id) as totalOrders,
               ROUND((SELECT AVG(rating) FROM reviews WHERE revieweeId = u.id), 1) as avgRating,
-              (SELECT COUNT(*) FROM reviews WHERE revieweeId = u.id) as reviewCount
-       FROM users u ${where}
+              (SELECT COUNT(*) FROM reviews WHERE revieweeId = u.id) as reviewCount,
+              (
+                (SELECT COUNT(*) FROM orders o 
+                 WHERE o.captainId = u.id 
+                   AND LOWER(o.status) NOT IN ('مكتمل', 'ملغي', 'ملغى', 'ملغية', 'completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'cancelled', 'rejected', 'مرفوض', 'منتهي', 'منتهية')
+                   AND (o.storeOrderStatus IS NULL OR UPPER(o.storeOrderStatus) NOT IN ('COMPLETED', 'CANCELLED'))
+                   AND (o.captainTripStatus IS NULL OR UPPER(o.captainTripStatus) NOT IN ('DELIVERED_SUCCESSFULLY', 'CANCELLED', 'COMPLETED'))
+                )
+                +
+                (SELECT COUNT(*) FROM shipments s 
+                 WHERE s.captainId = u.id 
+                   AND LOWER(s.status) NOT IN ('completed', 'مكتمل', 'منتهية', 'منتهي', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'delivered', 'ملغي', 'ملغى', 'ملغية', 'cancelled', 'rejected', 'مرفوض')
+                )
+              ) as activeOrdersCount,
+              sc.shiftId,
+              sc.clockInTime,
+              sc.clockOutTime,
+              sc.isOnBreak,
+              sc.breakStartTime,
+              sc.breakEndTime,
+              sc.breakDurationMinutes,
+              sh.name AS shiftName,
+              sh.status AS shiftStatus
+       FROM users u
+       LEFT JOIN shift_captains sc ON sc.id = (
+         SELECT sc2.id FROM shift_captains sc2
+         JOIN shifts s2 ON sc2.shiftId = s2.id
+         WHERE sc2.captainId = u.id
+           AND sc2.clockOutTime IS NULL
+           AND (sc2.clockInTime IS NOT NULL OR s2.status IN ('scheduled', 'active'))
+         ORDER BY (sc2.clockInTime IS NOT NULL) DESC, (DATE(s2.date) = CURDATE()) DESC, s2.date ASC
+         LIMIT 1
+       )
+       LEFT JOIN shifts sh ON sh.id = sc.shiftId
+       ${where}
        ORDER BY u.createdAt DESC
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 
     const activeUsers = req.app.get('activeUsers');
-    const captains = rows.map((m) => ({
-      ...m,
-      isOnline: activeUsers ? activeUsers.has(String(m.id)) : false,
-    }));
+    const captains = rows.map((m) => {
+      const isOnline = activeUsers ? activeUsers.has(String(m.id)) : false;
+      const activeOrdersCount = parseInt(m.activeOrdersCount || 0, 10);
+      const hasActiveShift = !!(m.shiftId && m.shiftName);
+      const isClockedIn = !!m.clockInTime;
+      const isOnBreak = !!(m.isOnBreak && m.breakEndTime && new Date(m.breakEndTime) > new Date());
+      const breakRemainingMinutes = isOnBreak 
+        ? Math.max(0, Math.ceil((new Date(m.breakEndTime) - new Date()) / 60000)) 
+        : 0;
+
+      const isBusy = activeOrdersCount >= 2;
+      const canAssignNormal = activeOrdersCount < 2 && !isOnBreak;
+
+      let statusLabel = 'متفرغ (0 طلبات)';
+      if (isOnBreak) {
+        statusLabel = `في استراحة ☕ (متبقي ${breakRemainingMinutes} د)`;
+      } else if (activeOrdersCount === 1) {
+        statusLabel = 'معه طلب واحد (متاح)';
+      } else if (activeOrdersCount >= 2) {
+        statusLabel = `مشغول (معه ${activeOrdersCount} طلبات - الحد الأقصى)`;
+      }
+
+      return {
+        ...m,
+        isOnline,
+        activeOrdersCount,
+        hasActiveShift,
+        isClockedIn,
+        shiftId: m.shiftId || null,
+        shiftName: m.shiftName || null,
+        isOnBreak,
+        breakRemainingMinutes,
+        breakDurationMinutes: m.breakDurationMinutes || 0,
+        isBusy,
+        canAssignNormal,
+        statusLabel,
+      };
+    });
 
     res.status(200).json({
       status: 1,
@@ -491,11 +560,897 @@ const uploadCaptainDocuments = async (req, res, next) => {
   }
 };
 
+// CREATE NEW CAPTAIN (Admin)
+const createCaptain = async (req, res, next) => {
+  const pool = getPool();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const {
+      fullName,
+      firstName,
+      lastName,
+      nationalId,
+      phone,
+      age,
+      zone,
+      branch,
+      email,
+      detailedAddress,
+      district,
+      whatsappNumber,
+      vehicleType,
+      plateNumber,
+      password,
+    } = req.body;
+
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ status: 0, message: 'رقم الهاتف مطلوب' });
+    }
+    if (!nationalId || !nationalId.trim()) {
+      return res.status(400).json({ status: 0, message: 'الرقم القومي مطلوب' });
+    }
+
+    // Split name if only fullName passed
+    let fName = firstName;
+    let lName = lastName;
+    if (!fName && fullName) {
+      const parts = fullName.trim().split(/\s+/);
+      fName = parts[0] || '';
+      lName = parts.slice(1).join(' ') || '';
+    }
+    if (!fName) {
+      return res.status(400).json({ status: 0, message: 'اسم الكابتن بالكامل مطلوب' });
+    }
+
+    // Check if phone or nationalId already exists
+    const [existing] = await conn.query(
+      'SELECT id, phone, nationalId FROM users WHERE phone = ? OR nationalId = ? LIMIT 1',
+      [phone.trim(), nationalId.trim()]
+    );
+    if (existing.length > 0) {
+      if (existing[0].phone === phone.trim()) {
+        return res.status(400).json({ status: 0, message: 'رقم الهاتف مسجل بالفعل مسبقاً' });
+      }
+      if (existing[0].nationalId === nationalId.trim()) {
+        return res.status(400).json({ status: 0, message: 'الرقم القومي مسجل بالفعل مسبقاً' });
+      }
+    }
+
+    // Hash password (use provided or default secure password)
+    const rawPass = password && password.trim().length >= 6 ? password.trim() : `cap@${phone.trim().slice(-6)}`;
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(rawPass, salt);
+
+    // File uploads
+    let profileImage = null;
+    let nationalIdFront = null;
+    let nationalIdBack = null;
+    let driverLicense = null;
+    let vehicleImage = null;
+
+    if (req.files) {
+      if (req.files.profileImage && req.files.profileImage[0]) {
+        profileImage = `/uploads/${req.files.profileImage[0].filename}`;
+      }
+      if (req.files.nationalIdFront && req.files.nationalIdFront[0]) {
+        nationalIdFront = `/uploads/${req.files.nationalIdFront[0].filename}`;
+      }
+      if (req.files.nationalIdBack && req.files.nationalIdBack[0]) {
+        nationalIdBack = `/uploads/${req.files.nationalIdBack[0].filename}`;
+      }
+      if (req.files.driverLicense && req.files.driverLicense[0]) {
+        driverLicense = `/uploads/${req.files.driverLicense[0].filename}`;
+      }
+      if (req.files.vehicleImage && req.files.vehicleImage[0]) {
+        vehicleImage = `/uploads/${req.files.vehicleImage[0].filename}`;
+      }
+    }
+
+    const referralCode = `CAP-${Date.now().toString().slice(-6)}`;
+
+    const [result] = await conn.query(
+      `INSERT INTO users (
+        firstName, lastName, email, phone, password, role, status,
+        nationalId, age, zone, branch, detailedAddress, district,
+        whatsappNumber, vehicleType, plateNumber, profileImage,
+        nationalIdFront, nationalIdBack, driverLicense, vehicleImage,
+        city, referralCode, walletBalance, points, rating, ratingCount,
+        isOpen, createdAt, updatedAt
+      ) VALUES (
+        ?, ?, ?, ?, ?, 'captain', 'active',
+        ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, 0.00, 0, 5.0, 0,
+        1, NOW(), NOW()
+      )`,
+      [
+        fName,
+        lName || '',
+        email && email.trim().length > 0 ? email.trim() : null,
+        phone.trim(),
+        hashedPassword,
+        nationalId.trim(),
+        age ? parseInt(age) : null,
+        zone ? zone.trim() : null,
+        branch ? branch.trim() : null,
+        detailedAddress ? detailedAddress.trim() : null,
+        district ? district.trim() : null,
+        whatsappNumber ? whatsappNumber.trim() : null,
+        vehicleType ? vehicleType.trim() : 'motorcycle',
+        plateNumber ? plateNumber.trim() : null,
+        profileImage,
+        nationalIdFront,
+        nationalIdBack,
+        driverLicense,
+        vehicleImage,
+        district || zone || 'الإسكندرية',
+        referralCode,
+      ]
+    );
+
+    const newCaptainId = result.insertId;
+
+    if (nationalIdFront || nationalIdBack || driverLicense || vehicleImage) {
+      await conn.query(
+        `INSERT INTO driver_documents (userId, nationalId, nationalIdFront, nationalIdBack, driverLicense, vehicleImage, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           nationalId = VALUES(nationalId),
+           nationalIdFront = VALUES(nationalIdFront),
+           nationalIdBack = VALUES(nationalIdBack),
+           driverLicense = VALUES(driverLicense),
+           vehicleImage = VALUES(vehicleImage),
+           updatedAt = NOW()`,
+        [newCaptainId, nationalId ? nationalId.trim() : null, nationalIdFront || null, nationalIdBack || null, driverLicense || null, vehicleImage || null]
+      );
+    }
+
+    await conn.commit();
+
+    res.status(201).json({
+      status: 1,
+      message: 'تم إنشاء وتفعيل حساب الكابتن بنجاح',
+      data: {
+        id: newCaptainId,
+        fullName: `${fName} ${lName}`.trim(),
+        phone: phone.trim(),
+        role: 'captain',
+        status: 'active',
+      },
+    });
+  } catch (error) {
+    await conn.rollback();
+    next(error);
+  } finally {
+    conn.release();
+  }
+};
+
+const COMPLETED_ORDER_STATUSES_SQL = "'Completed', 'منتهي', 'تم التنفيذ', 'Delivered', 'completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل'";
+const COMPLETED_SHIPMENT_STATUSES_SQL = "'منتهية', 'Completed', 'تم التنفيذ', 'delivered', 'Delivered', 'completed', 'تم التوصيل', 'تم التسليم', 'مكتمل'";
+
+const getCairoDateStr = (dateVal = new Date()) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date(dateVal));
+  } catch (_) {
+    return new Date(dateVal).toISOString().slice(0, 10);
+  }
+};
+
+const isOnlineMethod = (method) => {
+  if (!method) return false;
+  const m = String(method).trim().toLowerCase();
+  return ['online', 'kashier', 'card', 'wallet', 'محفظة', 'فيزا'].includes(m);
+};
+
+// Helper to resolve platform and captain share dynamically (supports percentage or fixed amount like 5/6 EGP)
+const resolveShares = (fee, rawPlat, rawCap) => {
+  const totalFee = parseFloat(fee || 0);
+  const hasPlat = (rawPlat !== null && rawPlat !== undefined && !isNaN(parseFloat(rawPlat)));
+  const hasCap = (rawCap !== null && rawCap !== undefined && !isNaN(parseFloat(rawCap)) && parseFloat(rawCap) > 0);
+
+  if (hasPlat && hasCap) {
+    return { platShare: parseFloat(rawPlat), capShare: parseFloat(rawCap) };
+  }
+  if (hasPlat && !hasCap) {
+    const plat = parseFloat(rawPlat);
+    return { platShare: plat, capShare: Math.max(0, totalFee - plat) };
+  }
+  if (!hasPlat && hasCap) {
+    const cap = parseFloat(rawCap);
+    return { platShare: Math.max(0, totalFee - cap), capShare: cap };
+  }
+  const defaultPlat = Math.round(totalFee * 0.20 * 100) / 100;
+  return { platShare: defaultPlat, capShare: Math.max(0, totalFee - defaultPlat) };
+};
+
+const getCaptainFinancials = async (req, res, next) => {
+  try {
+    const pool = getPool();
+    const { id } = req.params;
+    const targetDate = req.query.date || getCairoDateStr();
+
+    const [users] = await pool.query(
+      'SELECT id, firstName, lastName, phone, walletBalance FROM users WHERE id = ? AND role = "captain"',
+      [id]
+    );
+    if (users.length === 0) {
+      return res.status(404).json({ status: 0, message: 'الكابتن غير موجود' });
+    }
+    const captain = users[0];
+
+    // 1. Unsettled Orders (including store orders)
+    const [orders] = await pool.query(
+      `SELECT id, orderNumber, deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip, status, storeOrderStatus, captainTripStatus, createdAt, deliveredAt
+       FROM orders
+       WHERE captainId = ? AND (
+         status IN (${COMPLETED_ORDER_STATUSES_SQL}) 
+         OR storeOrderStatus = 'COMPLETED' 
+         OR captainTripStatus = 'DELIVERED_SUCCESSFULLY'
+       ) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)
+       ORDER BY createdAt DESC`,
+      [id]
+    );
+
+    // 2. Unsettled Shipments
+    const [shipments] = await pool.query(
+      `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip, status, createdAt
+       FROM shipments
+       WHERE captainId = ? AND status IN (${COMPLETED_SHIPMENT_STATUSES_SQL}) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)
+       ORDER BY createdAt DESC`,
+      [id]
+    );
+
+    // Helper to calculate financial aggregates
+    const calculateMetrics = (orderList, shipmentList) => {
+      let grossDeliveryFees = 0;
+      let platformCommission = 0;
+      let captainEarnings = 0;
+      let cashCollected = 0;
+      let onlineCollected = 0;
+      let platformDues = 0;
+      let captainDues = 0;
+      let cashDeliveriesCount = 0;
+      let onlineDeliveriesCount = 0;
+
+      for (const ord of orderList) {
+        const fee = parseFloat(ord.deliveryFee || 0);
+        const serviceFee = parseFloat(ord.serviceFee || 0);
+        const tip = parseFloat(ord.tip || 0);
+        const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+
+        grossDeliveryFees += fee;
+        platformCommission += platShare;
+        captainEarnings += capShare;
+
+        if (isOnlineMethod(ord.paymentMethod)) {
+          onlineCollected += fee;
+          captainDues += capShare;
+          onlineDeliveriesCount++;
+        } else {
+          cashCollected += (fee + serviceFee + tip);
+          platformDues += (platShare + serviceFee + tip);
+          cashDeliveriesCount++;
+        }
+      }
+
+      for (const shp of shipmentList) {
+        const price = parseFloat(shp.price || 0);
+        const serviceFee = parseFloat(shp.serviceFee || 0);
+        const tip = parseFloat(shp.tip || 0);
+        const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+
+        grossDeliveryFees += price;
+        platformCommission += platShare;
+        captainEarnings += capShare;
+
+        if (isOnlineMethod(shp.paymentMethod)) {
+          onlineCollected += price;
+          captainDues += capShare;
+          onlineDeliveriesCount++;
+        } else {
+          cashCollected += (price + serviceFee + tip);
+          platformDues += (platShare + serviceFee + tip);
+          cashDeliveriesCount++;
+        }
+      }
+
+      grossDeliveryFees = Math.round(grossDeliveryFees * 100) / 100;
+      platformCommission = Math.round(platformCommission * 100) / 100;
+      captainEarnings = Math.round(captainEarnings * 100) / 100;
+      cashCollected = Math.round(cashCollected * 100) / 100;
+      onlineCollected = Math.round(onlineCollected * 100) / 100;
+      platformDues = Math.round(platformDues * 100) / 100;
+      captainDues = Math.round(captainDues * 100) / 100;
+      const netBalance = Math.round((platformDues - captainDues) * 100) / 100;
+
+      return {
+        ordersCount: orderList.length,
+        shipmentsCount: shipmentList.length,
+        totalDeliveries: orderList.length + shipmentList.length,
+        cashDeliveriesCount,
+        onlineDeliveriesCount,
+        grossDeliveryFees,
+        platformCommission,
+        captainEarnings,
+        cashCollected,
+        onlineCollected,
+        platformDues,
+        captainDues,
+        netBalance,
+      };
+    };
+
+    // Filter today's / target date items for Daily Settlement
+    const isTargetDate = (item) => {
+      const dateVal = item.deliveredAt || item.createdAt;
+      if (!dateVal) return false;
+      const dStr = getCairoDateStr(dateVal);
+      return dStr === targetDate;
+    };
+
+    const dailyOrders = orders.filter(isTargetDate);
+    const dailyShipments = shipments.filter(isTargetDate);
+
+    const unsettledStats = calculateMetrics(orders, shipments);
+    const dailyStats = calculateMetrics(dailyOrders, dailyShipments);
+
+    // 3. Past settlements
+    const [settlements] = await pool.query(
+      `SELECT cs.*, u.firstName as adminFirstName, u.lastName as adminLastName
+       FROM captain_settlements cs
+       LEFT JOIN users u ON cs.createdBy = u.id
+       WHERE cs.captainId = ?
+       ORDER BY cs.createdAt DESC
+       LIMIT 50`,
+      [id]
+    );
+
+    const formattedSettlements = settlements.map((s) => ({
+      ...s,
+      grossDeliveryFees: parseFloat(s.grossDeliveryFees || 0),
+      platformCommission: parseFloat(s.platformCommission || 0),
+      captainEarnings: parseFloat(s.captainEarnings || 0),
+      cashCollected: parseFloat(s.cashCollected || 0),
+      onlineCollected: parseFloat(s.onlineCollected || 0),
+      platformDues: parseFloat(s.platformDues || 0),
+      captainDues: parseFloat(s.captainDues || 0),
+      netBalance: parseFloat(s.netBalance || 0),
+      settledAmount: parseFloat(s.settledAmount || 0),
+      settlementScope: s.settlementScope || 'total',
+      settlementDate: s.settlementDate ? new Date(s.settlementDate).toISOString().slice(0, 10) : null,
+      createdByName: `${s.adminFirstName || ''} ${s.adminLastName || ''}`.trim() || 'الإدارة',
+    }));
+
+    res.status(200).json({
+      status: 1,
+      data: {
+        commissionRate: 20.0,
+        targetDate,
+        dailyStats,
+        unsettledStats,
+        walletBalance: parseFloat(captain.walletBalance || 0),
+        settlementsHistory: formattedSettlements,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const settleCaptainFinancials = async (req, res, next) => {
+  const pool = getPool();
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { id } = req.params;
+    const {
+      settlementMethod = 'cash',
+      notes = '',
+      scope = 'total', // 'daily' or 'total'
+      targetDate = getCairoDateStr(),
+    } = req.body;
+
+    const [users] = await conn.query(
+      'SELECT id, firstName, lastName, phone FROM users WHERE id = ? AND role = "captain"',
+      [id]
+    );
+    if (users.length === 0) {
+      await conn.rollback();
+      return res.status(404).json({ status: 0, message: 'الكابتن غير موجود' });
+    }
+
+    // Lock eligible completed unsettled orders
+    const [allOrders] = await conn.query(
+      `SELECT id, deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip, createdAt, deliveredAt
+       FROM orders
+       WHERE captainId = ? AND (
+         status IN (${COMPLETED_ORDER_STATUSES_SQL}) 
+         OR storeOrderStatus = 'COMPLETED' 
+         OR captainTripStatus = 'DELIVERED_SUCCESSFULLY'
+       ) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)
+       FOR UPDATE`,
+      [id]
+    );
+
+    // Lock eligible completed unsettled shipments
+    const [allShipments] = await conn.query(
+      `SELECT id, price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip, createdAt
+       FROM shipments
+       WHERE captainId = ? AND status IN (${COMPLETED_SHIPMENT_STATUSES_SQL}) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)
+       FOR UPDATE`,
+      [id]
+    );
+
+    // Filter by scope if daily
+    const isTargetDate = (item) => {
+      const dateVal = item.deliveredAt || item.createdAt;
+      if (!dateVal) return false;
+      const dStr = getCairoDateStr(dateVal);
+      return dStr === targetDate;
+    };
+
+    const orders = scope === 'daily' ? allOrders.filter(isTargetDate) : allOrders;
+    const shipments = scope === 'daily' ? allShipments.filter(isTargetDate) : allShipments;
+
+    if (orders.length === 0 && shipments.length === 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        status: 0,
+        message: scope === 'daily'
+          ? `لا توجد عمليات توصيل مؤهلة للتصفية بتاريخ ${targetDate} أو تم تصفيتها مسبقاً`
+          : 'لا توجد عمليات توصيل مؤهلة للتصفية أو تم تصفية جميع العمليات مسبقاً',
+      });
+    }
+
+    let grossDeliveryFees = 0;
+    let platformCommission = 0;
+    let captainEarnings = 0;
+    let cashCollected = 0;
+    let onlineCollected = 0;
+    let platformDues = 0;
+    let captainDues = 0;
+    const orderIds = [];
+    const shipmentIds = [];
+    let minDate = null;
+    let maxDate = null;
+
+    const updateDates = (d) => {
+      if (!d) return;
+      const date = new Date(d);
+      if (!minDate || date < new Date(minDate)) minDate = d;
+      if (!maxDate || date > new Date(maxDate)) maxDate = d;
+    };
+
+    for (const ord of orders) {
+      orderIds.push(ord.id);
+      updateDates(ord.deliveredAt || ord.createdAt);
+      const fee = parseFloat(ord.deliveryFee || 0);
+      const serviceFee = parseFloat(ord.serviceFee || 0);
+      const tip = parseFloat(ord.tip || 0);
+      const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+
+      grossDeliveryFees += fee;
+      platformCommission += platShare;
+      captainEarnings += capShare;
+
+      if (isOnlineMethod(ord.paymentMethod)) {
+        onlineCollected += fee;
+        captainDues += capShare;
+      } else {
+        cashCollected += (fee + serviceFee + tip);
+        platformDues += (platShare + serviceFee + tip);
+      }
+    }
+
+    for (const shp of shipments) {
+      shipmentIds.push(shp.id);
+      updateDates(shp.createdAt);
+      const price = parseFloat(shp.price || 0);
+      const serviceFee = parseFloat(shp.serviceFee || 0);
+      const tip = parseFloat(shp.tip || 0);
+      const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+
+      grossDeliveryFees += price;
+      platformCommission += platShare;
+      captainEarnings += capShare;
+
+      if (isOnlineMethod(shp.paymentMethod)) {
+        onlineCollected += price;
+        captainDues += capShare;
+      } else {
+        cashCollected += (price + serviceFee + tip);
+        platformDues += (platShare + serviceFee + tip);
+      }
+    }
+
+    grossDeliveryFees = Math.round(grossDeliveryFees * 100) / 100;
+    platformCommission = Math.round(platformCommission * 100) / 100;
+    captainEarnings = Math.round(captainEarnings * 100) / 100;
+    cashCollected = Math.round(cashCollected * 100) / 100;
+    onlineCollected = Math.round(onlineCollected * 100) / 100;
+    platformDues = Math.round(platformDues * 100) / 100;
+    captainDues = Math.round(captainDues * 100) / 100;
+
+    const netBalance = Math.round((platformDues - captainDues) * 100) / 100;
+    const settledAmount = Math.abs(netBalance);
+
+    let settlementType = 'zero_balance';
+    if (netBalance > 0) {
+      settlementType = 'collection_from_captain';
+    } else if (netBalance < 0) {
+      settlementType = 'payout_to_captain';
+    }
+
+    const scopePrefix = scope === 'daily' ? 'DAY' : 'TOT';
+    const settlementNumber = `CPT-${scopePrefix}-${Date.now().toString().slice(-6)}${Math.floor(10 + Math.random() * 90)}`;
+
+    const [settleRes] = await conn.query(
+      `INSERT INTO captain_settlements (
+        settlementNumber, captainId, periodStart, periodEnd,
+        totalOrders, totalShipments, grossDeliveryFees, platformCommission,
+        captainEarnings, cashCollected, onlineCollected, platformDues,
+        captainDues, netBalance, settledAmount, settlementType, settlementScope, settlementDate, paymentMethod,
+        status, notes, createdBy
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)`,
+      [
+        settlementNumber,
+        id,
+        minDate || new Date(),
+        maxDate || new Date(),
+        orderIds.length,
+        shipmentIds.length,
+        grossDeliveryFees.toFixed(2),
+        platformCommission.toFixed(2),
+        captainEarnings.toFixed(2),
+        cashCollected.toFixed(2),
+        onlineCollected.toFixed(2),
+        platformDues.toFixed(2),
+        captainDues.toFixed(2),
+        netBalance.toFixed(2),
+        settledAmount.toFixed(2),
+        settlementType,
+        scope,
+        scope === 'daily' ? targetDate : null,
+        settlementMethod,
+        notes || null,
+        req.user.id,
+      ]
+    );
+
+    const settlementId = settleRes.insertId;
+
+    if (orderIds.length > 0) {
+      await conn.query(
+        'UPDATE orders SET isCaptainSettled = 1, captainSettlementId = ? WHERE id IN (?)',
+        [settlementId, orderIds]
+      );
+    }
+
+    if (shipmentIds.length > 0) {
+      await conn.query(
+        'UPDATE shipments SET isCaptainSettled = 1, captainSettlementId = ? WHERE id IN (?)',
+        [settlementId, shipmentIds]
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO wallet_transactions (userId, title, amount, type, status, reference, paymentMethod, accountDetails)
+       VALUES (?, ?, ?, ?, 'success', ?, ?, ?)`,
+      [
+        id,
+        scope === 'daily'
+          ? `تسوية يومية رقم ${settlementNumber} (${targetDate})`
+          : `تسوية كلية رقم ${settlementNumber}`,
+        settledAmount,
+        settlementType === 'collection_from_captain' ? 'withdraw' : 'deposit',
+        settlementNumber,
+        settlementMethod,
+        notes || (scope === 'daily' ? `تسوية يومية ${targetDate}` : 'تسوية كلية شاملة'),
+      ]
+    );
+
+    if (typeof logAudit === 'function') {
+      try {
+        await logAudit({
+          actorId: req.user.id,
+          actorRole: req.user.role,
+          action: 'captain_settlement',
+          entityType: 'captain_settlement',
+          entityId: settlementId,
+          newValue: {
+            settlementNumber,
+            captainId: id,
+            settlementScope: scope,
+            settlementDate: scope === 'daily' ? targetDate : null,
+            ordersCount: orderIds.length,
+            shipmentsCount: shipmentIds.length,
+            grossDeliveryFees,
+            platformCommission,
+            captainEarnings,
+            platformDues,
+            captainDues,
+            netBalance,
+            settlementType,
+            settledAmount,
+          },
+          ipAddress: req.ip,
+        });
+      } catch (auditErr) {
+        console.error('Error logging audit for captain settlement:', auditErr);
+      }
+    }
+
+    await conn.commit();
+
+    const io = req.app?.get('io') || global.io;
+    if (io) {
+      io.emit('captain:settlement', {
+        captainId: id,
+        settlementNumber,
+        settlementScope: scope,
+        settledAmount,
+        settlementType,
+      });
+    }
+
+    res.status(200).json({
+      status: 1,
+      message: scope === 'daily'
+        ? `تمت التسوية اليومية للكابتن بنجاح بتاريخ ${targetDate}`
+        : 'تمت التسوية الكلية الشاملة للكابتن بنجاح',
+      data: {
+        settlementId,
+        settlementNumber,
+        settlementScope: scope,
+        settlementDate: scope === 'daily' ? targetDate : null,
+        settledOrders: orderIds.length,
+        settledShipments: shipmentIds.length,
+        settledAmount,
+        settlementType,
+        netBalance,
+        periodStart: minDate,
+        periodEnd: maxDate,
+      },
+    });
+  } catch (error) {
+    await conn.rollback();
+    next(error);
+  } finally {
+    conn.release();
+  }
+};
+
+// 10. UPDATE STORE ORDER TRIP STATUS (Captain Mapless Flow)
+const updateStoreOrderTripStatus = async (req, res, next) => {
+  try {
+    const pool = getPool();
+    const captainId = req.user.id;
+    const { id } = req.params;
+    const { tripStatus, reason } = req.body;
+
+    if (!tripStatus) {
+      return res.status(400).json({ status: 0, message: 'حالة رحلة الكابتن مطلوبة' });
+    }
+
+    const {
+      STORE_ORDER_STATUS,
+      CAPTAIN_TRIP_STATUS,
+      canTransitionCaptainTrip,
+      mapStoreToLegacyStatus,
+      getArabicStoreStatus,
+    } = require('../constants/orderStatusConstants');
+
+    // Normalize tripStatus
+    let targetTripStatus = null;
+    const sNorm = tripStatus.toString().trim().toUpperCase();
+
+    if (['HEADING_TO_STORE', 'متجه للمتجر', 'في الطريق للاستلام'].includes(sNorm)) {
+      targetTripStatus = CAPTAIN_TRIP_STATUS.HEADING_TO_STORE;
+    } else if (['ORDER_PICKED_UP', 'PICKED_UP', 'تم استلام الطلب', 'تم الاستلام'].includes(sNorm)) {
+      targetTripStatus = CAPTAIN_TRIP_STATUS.ORDER_PICKED_UP;
+    } else if (['HEADING_TO_CLIENT', 'متجه للعميل', 'في الطريق للتسليم'].includes(sNorm)) {
+      targetTripStatus = CAPTAIN_TRIP_STATUS.HEADING_TO_CLIENT;
+    } else if (['DELIVERED_SUCCESSFULLY', 'DELIVERED', 'COMPLETED', 'توصيل ناجح', 'تم التوصيل', 'تم التسليم'].includes(sNorm)) {
+      targetTripStatus = CAPTAIN_TRIP_STATUS.DELIVERED_SUCCESSFULLY;
+    } else if (['CANCELLED', 'ملغي', 'ملغى'].includes(sNorm)) {
+      targetTripStatus = CAPTAIN_TRIP_STATUS.CANCELLED;
+    }
+
+    if (!targetTripStatus) {
+      return res.status(400).json({ status: 0, message: `حالة رحلة غير صالحة: ${tripStatus}` });
+    }
+
+    const [orderRows] = await pool.query(
+      `SELECT o.*, 
+              m.storeName as merchantStoreName, m.firstName as merchantFirstName, m.lastName as merchantLastName,
+              c.firstName as clientFirstName, c.lastName as clientLastName, c.phone as clientPhone
+       FROM orders o
+       LEFT JOIN users m ON o.merchantId = m.id
+       LEFT JOIN users c ON o.clientId = c.id
+       WHERE o.id = ?`,
+      [id]
+    );
+
+    if (!orderRows.length) {
+      return res.status(404).json({ status: 0, message: 'الطلب غير موجود' });
+    }
+
+    const order = orderRows[0];
+    const isStoreOrder = order.orderType === 'store' || order.storeId !== null;
+
+    // Authorization: User must be the assigned captain or an admin
+    if (req.user.role !== 'admin' && order.captainId !== captainId) {
+      return res.status(403).json({ status: 0, message: 'غير مصرح لك بتحديث رحلة هذا الطلب' });
+    }
+
+    const currentTripStatus = order.captainTripStatus || CAPTAIN_TRIP_STATUS.ASSIGNED;
+
+    // For store orders, we only have 2 simplified captain steps: ORDER_PICKED_UP and DELIVERED_SUCCESSFULLY
+    // Transition validation
+    if (!canTransitionCaptainTrip(currentTripStatus, targetTripStatus)) {
+      return res.status(400).json({
+        status: 0,
+        message: `انتقال غير مسموح به في رحلة الكابتن من "${currentTripStatus}" إلى "${targetTripStatus}"`
+      });
+    }
+
+    // Determine updates to storeOrderStatus and timestamps
+    let updatedStoreOrderStatus = order.storeOrderStatus || STORE_ORDER_STATUS.PREPARING;
+    let timestampClause = '';
+    const updateParams = [targetTripStatus];
+
+    if (targetTripStatus === CAPTAIN_TRIP_STATUS.HEADING_TO_STORE) {
+      timestampClause += ', captainHeadingToStoreAt = COALESCE(captainHeadingToStoreAt, NOW())';
+    } else if (targetTripStatus === CAPTAIN_TRIP_STATUS.ORDER_PICKED_UP) {
+      timestampClause += ', pickedUpAt = COALESCE(pickedUpAt, NOW()), handedOverAt = COALESCE(handedOverAt, NOW())';
+      updatedStoreOrderStatus = isStoreOrder ? STORE_ORDER_STATUS.PICKED_UP : STORE_ORDER_STATUS.HANDED_OVER;
+    } else if (targetTripStatus === CAPTAIN_TRIP_STATUS.HEADING_TO_CLIENT) {
+      timestampClause += ', captainHeadingToClientAt = COALESCE(captainHeadingToClientAt, NOW())';
+    } else if (targetTripStatus === CAPTAIN_TRIP_STATUS.DELIVERED_SUCCESSFULLY) {
+      timestampClause += ', deliveredAt = COALESCE(deliveredAt, NOW()), completedAt = COALESCE(completedAt, NOW())';
+      updatedStoreOrderStatus = STORE_ORDER_STATUS.COMPLETED;
+    } else if (targetTripStatus === CAPTAIN_TRIP_STATUS.CANCELLED) {
+      timestampClause += ', cancellationReason = ?';
+      updateParams.push(reason || 'إلغاء الرحلة من قبل الكابتن');
+    }
+
+    const legacyStatus = isStoreOrder
+      ? getArabicStoreStatus(updatedStoreOrderStatus)
+      : mapStoreToLegacyStatus(updatedStoreOrderStatus, targetTripStatus);
+
+    updateParams.push(updatedStoreOrderStatus, legacyStatus, id);
+
+    await pool.query(
+      `UPDATE orders SET 
+        captainTripStatus = ?,
+        storeOrderStatus = ?,
+        status = ?
+        ${timestampClause}
+       WHERE id = ?`,
+      updateParams
+    );
+
+    const storeName = order.merchantStoreName || `${order.merchantFirstName || ''} ${order.merchantLastName || ''}`.trim() || 'المتجر';
+    const orderNumber = order.orderNumber;
+
+    // Real-time socket updates
+    const io = req.app.get('io');
+    if (io) {
+      const payload = {
+        orderId: id,
+        id: id,
+        orderNumber,
+        captainTripStatus: targetTripStatus,
+        storeOrderStatus: updatedStoreOrderStatus,
+        status: legacyStatus,
+        statusArabic: legacyStatus,
+        captainId: order.captainId,
+        isStoreOrder: true
+      };
+
+      io.to(`order_${id}`).emit('trip_status_update', payload);
+      io.to(`order_${id}`).emit('statusUpdate', payload);
+      io.to(`order_${id}`).emit('store_order_status_update', payload);
+      io.to('admins').emit('dashboard_update');
+      io.to('admins').emit('store_order_status_update', payload);
+
+      if (order.merchantId) {
+        io.to(`user_${order.merchantId}`).emit('trip_status_update', payload);
+        io.to(`user_${order.merchantId}`).emit('order_status_update', payload);
+        io.to(`user_${order.merchantId}`).emit('store_order_status_update', payload);
+      }
+      if (order.clientId) {
+        io.to(`user_${order.clientId}`).emit('order_status_update', payload);
+        io.to(`user_${order.clientId}`).emit('store_order_status_update', payload);
+      }
+    }
+
+    // Push notifications
+    try {
+      const { sendNotification } = require('../utils/notificationDispatcher');
+      const { notifyAdmins } = require('../utils/adminNotifier');
+
+      if (targetTripStatus === CAPTAIN_TRIP_STATUS.ORDER_PICKED_UP) {
+        if (order.clientId) {
+          await sendNotification(io, order.clientId, '🛵 المندوب استلم طلبك', `المندوب استلم طلبك رقم #${orderNumber} وهو في الطريق إليك.`, 'order', {
+            type: 'order_picked_up',
+            orderId: id.toString(),
+            orderNumber,
+            storeOrderStatus: STORE_ORDER_STATUS.PICKED_UP
+          });
+        }
+        if (order.merchantId) {
+          await sendNotification(io, order.merchantId, '📦 تم استلام الطلب', `تم استلام الطلب #${orderNumber} من المندوب بنجاح.`, 'order', {
+            type: 'order_picked_up',
+            orderId: id.toString(),
+            orderNumber,
+            storeOrderStatus: STORE_ORDER_STATUS.PICKED_UP
+          });
+        }
+        if (io) {
+          await notifyAdmins(io, 'المندوب استلم الطلب', `المندوب استلم الطلب #${orderNumber} من متجر ${storeName}`, 'order', {
+            type: 'order_picked_up',
+            orderId: id.toString(),
+            orderNumber
+          });
+        }
+      } else if (targetTripStatus === CAPTAIN_TRIP_STATUS.DELIVERED_SUCCESSFULLY) {
+        if (order.clientId) {
+          await sendNotification(io, order.clientId, '🎉 تم تسليم طلبك', `تم تسليم طلبك #${orderNumber} بنجاح. شكراً لثقتك بنا!`, 'order', {
+            type: 'order_delivered',
+            orderId: id.toString(),
+            orderNumber,
+            storeOrderStatus: STORE_ORDER_STATUS.DELIVERED
+          });
+        }
+        if (order.merchantId) {
+          await sendNotification(io, order.merchantId, '✅ تم تسليم الطلب للعميل', `تم تسليم الطلب #${orderNumber} للعميل بنجاح.`, 'order', {
+            type: 'order_delivered',
+            orderId: id.toString(),
+            orderNumber,
+            storeOrderStatus: STORE_ORDER_STATUS.DELIVERED
+          });
+        }
+        if (io) {
+          await notifyAdmins(io, 'تم تسليم الطلب بنجاح', `تم تسليم الطلب #${orderNumber} بنجاح للعميل`, 'order', {
+            type: 'order_delivered',
+            orderId: id.toString(),
+            orderNumber
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Error sending notifications in updateStoreOrderTripStatus:', e);
+    }
+
+    return res.json({
+      status: 1,
+      message: 'تم تحديث حالة رحلة الكابتن بنجاح',
+      data: {
+        orderId: parseInt(id),
+        captainTripStatus: targetTripStatus,
+        storeOrderStatus: updatedStoreOrderStatus,
+        status: legacyStatus
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getCaptains,
   getCaptainDetail,
   deleteCaptain,
   updateCaptainStatus,
   sendWarning,
-  uploadCaptainDocuments
+  uploadCaptainDocuments,
+  createCaptain,
+  getCaptainFinancials,
+  settleCaptainFinancials,
+  updateStoreOrderTripStatus,
 };

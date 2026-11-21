@@ -109,38 +109,245 @@ const getWalletData = async (req, res, next) => {
     }
 
     const currentBalance = parseFloat(users[0].walletBalance || 0);
+    const userRole = users[0].role || 'client';
+    let captainEarnings = 0;
+    let duePlatformFees = 0;
+    let totalBalance = currentBalance;
+    let availableBalance = currentBalance;
 
-    // 1. Calculate from completed orders
-    const [[ordersData]] = await pool.query(
-      `SELECT 
-        COALESCE(SUM(captainShare), COALESCE(SUM(deliveryFee), 0) * 0.8) as captShare,
-        COALESCE(SUM(platformShare), COALESCE(SUM(deliveryFee), 0) * 0.2) as platShare
-       FROM orders 
-       WHERE captainId = ? AND (status = 'Completed' OR status = 'delivered' OR status = 'منتهية')`,
-      [userId]
-    );
+    if (userRole === 'merchant') {
+      // 1. All-time completed store orders (إجمالي مبيعات المتجر لكل الأوقات)
+      const [[allTimeMerchant]] = await pool.query(
+        `SELECT 
+           COALESCE(SUM(orderPrice), 0) as totalAllTimeSales,
+           COUNT(*) as totalAllTimeOrders
+         FROM orders 
+         WHERE merchantId = ? AND (
+           status IN ('مكتمل', 'completed', 'Completed', 'delivered', 'Delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام')
+           OR storeOrderStatus = 'COMPLETED'
+         )`,
+        [userId]
+      );
+      const allTimeSales = parseFloat(allTimeMerchant?.totalAllTimeSales || 0);
 
-    // 2. Calculate from completed shipments
-    const [[shipmentsData]] = await pool.query(
-      `SELECT 
-        COALESCE(SUM(captainShare), COALESCE(SUM(price), 0) * 0.8) as captShare,
-        COALESCE(SUM(platformShare), COALESCE(SUM(price), 0) * 0.2) as platShare
-       FROM shipments 
-       WHERE captainId = ? AND (status = 'تم التسليم' OR status = 'delivered' OR status = 'Completed')`,
-      [userId]
-    );
+      // 2. Fetch completed UNSETTLED store orders for this merchant (المستحقات الحالية المتبادلة)
+      const [unsettledOrders] = await pool.query(
+        `SELECT 
+           id, orderPrice, deliveryFee, paymentMethod, status, platformCommission, isPaid, isSettled
+         FROM orders 
+         WHERE merchantId = ? AND (
+           status IN ('مكتمل', 'completed', 'Completed', 'delivered', 'Delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام')
+           OR storeOrderStatus = 'COMPLETED'
+         ) AND (isSettled = 0 OR isSettled IS NULL)`,
+        [userId]
+      );
 
-    let captainEarnings = parseFloat(ordersData?.captShare || 0) + parseFloat(shipmentsData?.captShare || 0);
-    let duePlatformFees = parseFloat(ordersData?.platShare || 0) + parseFloat(shipmentsData?.platShare || 0);
+      let unsettledSales = 0;
+      let cashSales = 0;
+      let onlineSales = 0;
+      let platformDues = 0; // إحنا لينا كام عنده (عمولة المنصة على الطلبات)
+      let merchantDues = 0; // هو ليه كام عندنا (مستحقات المنتجات المدفوعة أونلاين)
+      const platformFeePerOrder = 5; // 5 EGP or custom order commission
 
-    // Fallback: If no order records yet but user has a wallet balance (e.g. 520 EGP), apply 80% captain / 20% platform rule
-    if (captainEarnings === 0 && duePlatformFees === 0 && currentBalance > 0) {
-      captainEarnings = Math.round(currentBalance * 0.80 * 100) / 100;
-      duePlatformFees = Math.round(currentBalance * 0.20 * 100) / 100;
+      const isOnline = (method, isPaid) => {
+        if (isPaid === 1 || isPaid === true) return true;
+        if (!method) return false;
+        const m = String(method).trim().toLowerCase();
+        return ['online', 'kashier', 'card', 'wallet', 'محفظة', 'فيزا'].includes(m);
+      };
+
+      for (const ord of unsettledOrders) {
+        const pPrice = parseFloat(ord.orderPrice || 0);
+        const commission = ord.platformCommission && parseFloat(ord.platformCommission) > 0
+          ? parseFloat(ord.platformCommission)
+          : platformFeePerOrder;
+
+        unsettledSales += pPrice;
+        platformDues += commission;
+
+        if (isOnline(ord.paymentMethod, ord.isPaid)) {
+          onlineSales += pPrice;
+          merchantDues += pPrice; // Platform collected online payment for store product, merchant is owed this!
+        } else {
+          cashSales += pPrice;
+        }
+      }
+
+      unsettledSales = Math.round(unsettledSales * 100) / 100;
+      cashSales = Math.round(cashSales * 100) / 100;
+      onlineSales = Math.round(onlineSales * 100) / 100;
+      platformDues = Math.round(platformDues * 100) / 100;
+      merchantDues = Math.round(merchantDues * 100) / 100;
+
+      duePlatformFees = platformDues;
+      captainEarnings = allTimeSales; // Total store sales / revenue for all time
+      // إجمالي الرصيد والأرباح الكلية للمحفظة كلها (يراعي الرصيد السالب أو الموجب بدقة):
+      totalBalance = Math.round((currentBalance + allTimeSales) * 100) / 100;
+      availableBalance = Math.round((merchantDues > 0 ? (merchantDues + Math.min(0, currentBalance)) : (currentBalance - duePlatformFees)) * 100) / 100;
+
+      const netBalance = Math.round((platformDues - merchantDues) * 100) / 100;
+
+      res.locals = res.locals || {};
+      res.locals.captainFinancials = {
+        platformDues,
+        captainDues: merchantDues, // هو ليه كام عندنا من الدفع الإلكتروني
+        netBalance,
+        grossDeliveryFees: allTimeSales,
+        cashCollected: cashSales,
+        onlineCollected: onlineSales,
+      };
+    } else {
+      // 1. All-time completed earnings across all orders and shipments (إجمالي أرباح التوصيل الكلية لكل الأوقات)
+      const [[allTimeOrders]] = await pool.query(
+        `SELECT 
+           COALESCE(SUM(captainShare), 0) as totalCapShare,
+           COALESCE(SUM(deliveryFee), 0) as totalFee
+         FROM orders 
+         WHERE captainId = ? AND (
+           status IN ('Completed', 'منتهي', 'تم التنفيذ', 'Delivered', 'completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل') 
+           OR storeOrderStatus = 'COMPLETED' 
+           OR captainTripStatus = 'DELIVERED_SUCCESSFULLY'
+         )`,
+        [userId]
+      );
+
+      const [[allTimeShipments]] = await pool.query(
+        `SELECT 
+           COALESCE(SUM(captainShare), 0) as totalCapShare,
+           COALESCE(SUM(price), 0) as totalPrice
+         FROM shipments 
+         WHERE captainId = ? AND status IN ('منتهية', 'Completed', 'تم التنفيذ', 'delivered', 'Delivered', 'completed', 'تم التوصيل', 'تم التسليم', 'مكتمل')`,
+        [userId]
+      );
+
+      let allTimeCapEarnings = parseFloat(allTimeOrders?.totalCapShare || 0) + parseFloat(allTimeShipments?.totalCapShare || 0);
+      if (allTimeCapEarnings === 0) {
+        const gross = parseFloat(allTimeOrders?.totalFee || 0) + parseFloat(allTimeShipments?.totalPrice || 0);
+        if (gross > 0) {
+          allTimeCapEarnings = Math.round(gross * 0.80 * 100) / 100;
+        }
+      }
+
+      // 2. Calculate from completed UNSETTLED orders (Captain)
+      const [ordersData] = await pool.query(
+        `SELECT deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip
+         FROM orders 
+         WHERE captainId = ? AND (
+           status IN ('Completed', 'منتهي', 'تم التنفيذ', 'Delivered', 'completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل') 
+           OR storeOrderStatus = 'COMPLETED' 
+           OR captainTripStatus = 'DELIVERED_SUCCESSFULLY'
+         ) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
+        [userId]
+      );
+
+      // 3. Calculate from completed UNSETTLED shipments (Captain)
+      const [shipmentsData] = await pool.query(
+        `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip
+         FROM shipments 
+         WHERE captainId = ? AND status IN ('منتهية', 'Completed', 'تم التنفيذ', 'delivered', 'Delivered', 'completed', 'تم التوصيل', 'تم التسليم', 'مكتمل')
+         AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
+        [userId]
+      );
+
+      let grossDeliveryFees = 0;
+      let platformCommission = 0;
+      let totalCaptainEarnings = 0;
+      let cashCollected = 0;
+      let onlineCollected = 0;
+      let platformDues = 0;
+      let captainDues = 0;
+
+      const isOnline = (method) => {
+        if (!method) return false;
+        const m = String(method).trim().toLowerCase();
+        return ['online', 'kashier', 'card', 'wallet', 'محفظة', 'فيزا'].includes(m);
+      };
+
+      // Helper to resolve platform and captain share dynamically (supports percentage or fixed amount like 5/6 EGP)
+      const resolveShares = (fee, rawPlat, rawCap) => {
+        const totalFee = parseFloat(fee || 0);
+        const hasPlat = (rawPlat !== null && rawPlat !== undefined && !isNaN(parseFloat(rawPlat)));
+        const hasCap = (rawCap !== null && rawCap !== undefined && !isNaN(parseFloat(rawCap)) && parseFloat(rawCap) > 0);
+
+        if (hasPlat && hasCap) {
+          return { platShare: parseFloat(rawPlat), capShare: parseFloat(rawCap) };
+        }
+        if (hasPlat && !hasCap) {
+          const plat = parseFloat(rawPlat);
+          return { platShare: plat, capShare: Math.max(0, totalFee - plat) };
+        }
+        if (!hasPlat && hasCap) {
+          const cap = parseFloat(rawCap);
+          return { platShare: Math.max(0, totalFee - cap), capShare: cap };
+        }
+        const defaultPlat = Math.round(totalFee * 0.20 * 100) / 100;
+        return { platShare: defaultPlat, capShare: Math.max(0, totalFee - defaultPlat) };
+      };
+
+      for (const ord of ordersData) {
+        const fee = parseFloat(ord.deliveryFee || 0);
+        const serviceFee = parseFloat(ord.serviceFee || 0);
+        const tip = parseFloat(ord.tip || 0);
+        const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+
+        grossDeliveryFees += fee;
+        platformCommission += platShare;
+        totalCaptainEarnings += capShare;
+
+        if (isOnline(ord.paymentMethod)) {
+          onlineCollected += fee;
+          captainDues += capShare;
+        } else {
+          cashCollected += (fee + serviceFee + tip);
+          platformDues += (platShare + serviceFee + tip);
+        }
+      }
+
+      for (const shp of shipmentsData) {
+        const price = parseFloat(shp.price || 0);
+        const serviceFee = parseFloat(shp.serviceFee || 0);
+        const tip = parseFloat(shp.tip || 0);
+        const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+
+        grossDeliveryFees += price;
+        platformCommission += platShare;
+        totalCaptainEarnings += capShare;
+
+        if (isOnline(shp.paymentMethod)) {
+          onlineCollected += price;
+          captainDues += capShare;
+        } else {
+          cashCollected += (price + serviceFee + tip);
+          platformDues += (platShare + serviceFee + tip);
+        }
+      }
+
+      grossDeliveryFees = Math.round(grossDeliveryFees * 100) / 100;
+      platformCommission = Math.round(platformCommission * 100) / 100;
+      totalCaptainEarnings = Math.round(totalCaptainEarnings * 100) / 100;
+      cashCollected = Math.round(cashCollected * 100) / 100;
+      onlineCollected = Math.round(onlineCollected * 100) / 100;
+      platformDues = Math.round(platformDues * 100) / 100;
+      captainDues = Math.round(captainDues * 100) / 100;
+      duePlatformFees = platformDues;
+
+      const finalAllTimeCapEarnings = Math.max(allTimeCapEarnings, totalCaptainEarnings);
+      captainEarnings = finalAllTimeCapEarnings;
+      // إجمالي الرصيد والأرباح الكلية للمحفظة كلها (يراعي الرصيد السالب أو الموجب بدقة):
+      totalBalance = Math.round((currentBalance + finalAllTimeCapEarnings) * 100) / 100;
+      availableBalance = Math.round((captainDues > 0 ? (captainDues + Math.min(0, currentBalance)) : (currentBalance - duePlatformFees)) * 100) / 100;
+
+      const netBalance = Math.round((platformDues - captainDues) * 100) / 100;
+      res.locals = res.locals || {};
+      res.locals.captainFinancials = {
+        platformDues,
+        captainDues,
+        netBalance,
+        grossDeliveryFees,
+        cashCollected,
+        onlineCollected,
+      };
     }
-
-    const totalBalance = currentBalance > 0 ? currentBalance : (captainEarnings + duePlatformFees);
-    const availableBalance = Math.max(0, currentBalance - duePlatformFees);
 
     // Get recent transactions with optional filter
     let filterClause = '';
@@ -162,6 +369,64 @@ const getWalletData = async (req, res, next) => {
        LIMIT 30`,
       [userId]
     );
+
+    // For merchants, merge recent store orders into the transactions feed
+    if (userRole === 'merchant') {
+      try {
+        const [merchantOrders] = await pool.query(
+          `SELECT id, clientName, orderPrice, status, createdAt as date
+           FROM orders
+           WHERE merchantId = ?
+           ORDER BY createdAt DESC
+           LIMIT 20`,
+          [userId]
+        );
+
+        const existingReferences = new Set(
+          transactions.map(t => t.reference || '').filter(Boolean)
+        );
+
+        for (const ord of merchantOrders) {
+          const orderRef = `#ORD${ord.id}`;
+          if (!existingReferences.has(orderRef)) {
+            const isDone = ['Completed', 'delivered', 'Delivered', 'تم التوصيل', 'مكتمل', 'منتهية', 'تم التسليم', 'تم الاستلام'].includes(ord.status);
+            
+            if (filter === 'all' || filter === 'orders' || filter === 'order') {
+              transactions.push({
+                id: `ord_${ord.id}`,
+                title: `طلب متجر #${ord.id} - ${ord.clientName || 'عميل'}`,
+                amount: parseFloat(ord.orderPrice || 0),
+                type: 'deposit',
+                category: 'orders',
+                status: isDone ? 'success' : (['Cancelled', 'ملغى', 'مرفوض'].includes(ord.status) ? 'failed' : 'pending'),
+                reference: orderRef,
+                paymentMethod: 'store_order',
+                date: ord.date,
+              });
+            }
+
+            if (isDone && (filter === 'all' || filter === 'platform_fees' || filter === 'platform_fee' || filter === 'رسوم المنصة')) {
+              transactions.push({
+                id: `fee_${ord.id}`,
+                title: `رسوم المنصة - طلب #${ord.id}`,
+                amount: 5.0,
+                type: 'withdraw',
+                category: 'platform_fees',
+                status: 'success',
+                reference: `#FEE${ord.id}`,
+                paymentMethod: 'platform_fee',
+                date: ord.date,
+              });
+            }
+          }
+        }
+
+        // Sort combined transactions newest first
+        transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+      } catch (errOrders) {
+        console.error('Error fetching merchant orders for wallet:', errOrders);
+      }
+    }
 
     // Get pending withdrawal if exists
     let pendingWithdrawal = null;
@@ -202,19 +467,28 @@ const getWalletData = async (req, res, next) => {
         due_platform_fees: duePlatformFees,
         current_balance: currentBalance,
         available_balance: availableBalance,
+        platform_dues: res.locals?.captainFinancials?.platformDues ?? duePlatformFees,
+        captain_dues: res.locals?.captainFinancials?.captainDues ?? 0,
+        net_balance: res.locals?.captainFinancials?.netBalance ?? duePlatformFees,
+        gross_delivery_fees: res.locals?.captainFinancials?.grossDeliveryFees ?? (captainEarnings + duePlatformFees),
+        cash_collected: res.locals?.captainFinancials?.cashCollected ?? 0,
+        online_collected: res.locals?.captainFinancials?.onlineCollected ?? 0,
+        is_online_paid_exists: (res.locals?.captainFinancials?.captainDues ?? 0) > 0,
         pending_balance: pendingWithdrawal ? pendingWithdrawal.amount : 0,
         pendingWithdrawal,
         recent_transactions: transactions.map(tx => {
-          let category = 'other';
+          let category = tx.category || 'other';
           const t = tx.title || '';
-          if (t.includes('طلب') || t.includes('شحنة') || t.includes('توصيل')) {
-            category = 'orders';
-          } else if (t.includes('منصة') || t.includes('عمولة')) {
-            category = 'platform_fees';
-          } else if (tx.type === 'withdraw') {
-            category = 'withdrawals';
-          } else if (t.includes('شحن') || t.includes('إيداع') || tx.type === 'deposit') {
-            category = 'deposits';
+          if (category === 'other') {
+            if (t.includes('طلب') || t.includes('شحنة') || t.includes('توصيل')) {
+              category = 'orders';
+            } else if (t.includes('منصة') || t.includes('عمولة')) {
+              category = 'platform_fees';
+            } else if (tx.type === 'withdraw') {
+              category = 'withdrawals';
+            } else if (t.includes('شحن') || t.includes('إيداع') || tx.type === 'deposit') {
+              category = 'deposits';
+            }
           }
 
           return {
@@ -224,14 +498,14 @@ const getWalletData = async (req, res, next) => {
             type: tx.type,
             category: category,
             status: tx.status,
-            reference: tx.reference || `#TXN${12588 + parseInt(tx.id)}`,
-            date: new Date(tx.date).toLocaleString('ar-EG', {
+            reference: tx.reference || `#TXN${12588 + (parseInt(tx.id) || 1)}`,
+            date: tx.date ? new Date(tx.date).toLocaleString('ar-EG', {
               hour: '2-digit',
               minute: '2-digit',
               day: '2-digit',
               month: '2-digit',
               year: 'numeric',
-            }),
+            }) : '',
           };
         }),
       },
@@ -244,7 +518,12 @@ const getWalletData = async (req, res, next) => {
 // ─── POST /api/wallet/withdraw ───────────────────────────────────────────────
 const withdraw = async (req, res, next) => {
   try {
-    const { amount, paymentMethod, name, phone, walletProvider, bankName, bankAccountNumber } = req.body;
+    const { amount, paymentMethod, name } = req.body;
+    const phone = (req.body.phone || req.body['?phone'] || '')?.toString().trim();
+    const walletProvider = (req.body.walletProvider || req.body['?walletProvider'] || '')?.toString().trim();
+    const bankName = (req.body.bankName || req.body['?bankName'] || '')?.toString().trim();
+    const bankAccountNumber = (req.body.bankAccountNumber || req.body['?bankAccountNumber'] || '')?.toString().trim();
+    const accountHolderName = (name || req.body['?name'] || '')?.toString().trim();
     const userId = req.user.id;
 
     if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
@@ -291,38 +570,58 @@ const withdraw = async (req, res, next) => {
     let title = '';
 
     if (paymentMethod === 'wallet') {
-      if (!phone || !name || !walletProvider) {
+      if (!phone || !accountHolderName || !walletProvider) {
         return res.status(400).json({ status: 0, message: 'جميع بيانات المحفظة مطلوبة' });
       }
-      accountDetailsObj = { phone, name, walletProvider };
+      accountDetailsObj = { phone, name: accountHolderName, walletProvider };
       title = `طلب سحب للمحفظة (${walletProvider}) - ${phone}`;
     } else {
-      if (!bankName || !bankAccountNumber || !name) {
+      if (!bankName || !bankAccountNumber || !accountHolderName) {
         return res.status(400).json({ status: 0, message: 'جميع بيانات الحساب البنكي مطلوبة' });
       }
-      accountDetailsObj = { bankName, bankAccountNumber, name };
+      accountDetailsObj = { bankName, bankAccountNumber, name: accountHolderName };
       title = `طلب سحب للحساب البنكي (${bankName}) - ${bankAccountNumber}`;
     }
 
     const accountDetailsStr = JSON.stringify(accountDetailsObj);
+
+    const userRole = users[0].role || 'client';
+    let totalDeduction = amountVal;
+    let actualPlatformFee = 0;
+
+    // Only apply default driver 20% platform commission formula for captains
+    if (userRole === 'captain') {
+      const platformFee = Math.round((amountVal / 0.80 - amountVal) * 100) / 100;
+      totalDeduction = Math.min(currentBalance, Math.round((amountVal + platformFee) * 100) / 100);
+      actualPlatformFee = Math.round((totalDeduction - amountVal) * 100) / 100;
+    }
 
     // Deduct balance and insert transaction
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      // Deduct immediately
+      // Deduct total amount (withdrawal amount + platform fee if applicable)
       await conn.query(
         'UPDATE users SET walletBalance = walletBalance - ? WHERE id = ?',
-        [amountVal, userId]
+        [totalDeduction, userId]
       );
 
-      // Create pending transaction record
+      // Create pending transaction record for the requested withdrawal
       const [result] = await conn.query(
         `INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, accountDetails)
          VALUES (?, ?, ?, 'withdraw', 'pending', ?, ?)`,
         [userId, title, amountVal, paymentMethod, accountDetailsStr]
       );
+
+      // If platform fee was deducted, record platform fee transaction
+      if (actualPlatformFee > 0) {
+        await conn.query(
+          `INSERT INTO wallet_transactions (userId, title, amount, type, status)
+           VALUES (?, ?, ?, 'withdraw', 'success')`,
+          [userId, `عمولة المنصة من طلب السحب (${actualPlatformFee} جنيه)`, actualPlatformFee]
+        );
+      }
 
       await conn.commit();
 
@@ -333,6 +632,8 @@ const withdraw = async (req, res, next) => {
           transactionId: result.insertId,
           userId,
           amount: amountVal,
+          platformFee: actualPlatformFee,
+          totalDeducted: totalDeduction,
           paymentMethod,
           title
         });
@@ -356,6 +657,25 @@ const withdraw = async (req, res, next) => {
         );
       } catch (err) {
         console.error('Error sending withdraw admin notification:', err);
+      }
+
+      // Notify User / Merchant about their withdrawal request
+      try {
+        const { sendNotification } = require('../utils/notificationDispatcher');
+        await sendNotification(
+          io,
+          userId,
+          'تم استلام طلب السحب 💵',
+          `تم استلام طلب سحب مبلغ ${amountVal} جنيه بنجاح وجارٍ مراجعته من الإدارة.`,
+          'wallet',
+          {
+            type: 'withdrawal_requested',
+            transactionId: result.insertId.toString(),
+            amount: amountVal.toString()
+          }
+        );
+      } catch (err) {
+        console.error('Error sending withdraw notification to user:', err);
       }
 
       res.status(200).json({

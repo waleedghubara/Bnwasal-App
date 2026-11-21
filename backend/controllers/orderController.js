@@ -17,6 +17,9 @@ async function fetchOrderEventData(id) {
       m.storeName as merchantName,
       m.firstName as merchantFirstName,
       m.lastName as merchantLastName,
+      m.storeName as merchantAddress,
+      m.latitude as merchantLatitude,
+      m.longitude as merchantLongitude,
       a.firstName as assignedAdminFirstName,
       a.lastName as assignedAdminLastName
     FROM orders o
@@ -34,27 +37,33 @@ async function fetchOrderEventData(id) {
     tripId: o.trip_id ? o.trip_id.toString() : null,
     details: o.details,
     storeDescription: o.storeDescription,
+    merchantAddress: o.merchantAddress || o.merchantName || o.storeDescription || '',
+    fromAddress: o.merchantAddress || o.merchantName || o.storeDescription || '',
     notes: o.notes || '',
     deliveryAddress: o.deliveryAddress,
     clientName: o.clientName,
     phone: o.phone,
     orderPrice: parseFloat(o.orderPrice || 0),
     deliveryFee: parseFloat(o.deliveryFee || 0),
+    latitude: o.latitude ? parseFloat(o.latitude) : null,
+    longitude: o.longitude ? parseFloat(o.longitude) : null,
+    merchantLatitude: o.merchantLatitude ? parseFloat(o.merchantLatitude) : null,
+    merchantLongitude: o.merchantLongitude ? parseFloat(o.merchantLongitude) : null,
     merchantName: o.merchantName || (o.merchantFirstName ? `${o.merchantFirstName} ${o.merchantLastName}` : ''),
     status: o.status,
     assignedAdminId: o.assignedAdminId ? o.assignedAdminId.toString() : null,
     assignedAdminName: o.assignedAdminFirstName ? `${o.assignedAdminFirstName} ${o.assignedAdminLastName}`.trim() : null,
-    isPaid: o.isPaid === 1 || o.isPaid === true,
     createdAt: formatDate(o.createdAt),
     updatedAt: formatDate(o.updatedAt),
   };
 }
 
-// 1. CREATE ORDER (Merchant only)
+// 1. CREATE ORDER (Merchant, Admin, Employee)
 const createOrder = async (req, res, next) => {
   try {
     const pool = getPool();
-    const merchantId = req.user.id;
+    const isAdminOrEmp = req.user.role === 'admin' || req.user.role === 'employee';
+    const merchantId = isAdminOrEmp && req.body.merchantId ? parseInt(req.body.merchantId, 10) : req.user.id;
 
     const {
       details,
@@ -76,6 +85,19 @@ const createOrder = async (req, res, next) => {
         status: 0,
         message: 'الحقول الأساسية مطلوبة: التفاصيل، وصف المتجر، عنوان التسليم، اسم العميل، الهاتف، سعر الطلب، ورسوم التوصيل'
       });
+    }
+
+    // Check operating hours & service availability (admin/employee can bypass)
+    if (!isAdminOrEmp) {
+      const { checkServiceAvailability } = require('../utils/serviceHoursHelper');
+      const serviceCheck = await checkServiceAvailability('orders');
+      if (!serviceCheck.isOpen) {
+        return res.status(400).json({
+          status: 0,
+          code: 'SERVICE_CLOSED',
+          message: serviceCheck.reason || 'خدمة اطلب مندوب غير متاحة حالياً نظراً لانتهاء مواعيد العمل اليومية.'
+        });
+      }
     }
 
     const orderNumber = 'ORD' + Date.now().toString().substring(5) + Math.floor(100 + Math.random() * 900);
@@ -114,20 +136,105 @@ const createOrder = async (req, res, next) => {
         }
       }
 
-      const statusVal = isAutoEnabled ? 'Ready For Assignment' : 'Pending Review';
-      const platformShare = isAutoEnabled ? finalDeliveryFee * 0.20 : null;
-      const captainShare = isAutoEnabled ? finalDeliveryFee * 0.80 : null;
+      // All orders start in 'Pending Review' for admin confirmation
+      const statusVal = 'Pending Review';
+      const platformShare = finalDeliveryFee * 0.20;
+      const captainShare = finalDeliveryFee * 0.80;
+
+      const { findActiveShiftForOrder } = require('../utils/shiftMatcher');
+      const shiftId = await findActiveShiftForOrder({
+        merchantId,
+        conn,
+      });
+
+      // Fetch store and commission settings
+      let storeId = req.body.storeId ? parseInt(req.body.storeId, 10) : null;
+      let commRate = 5.0;
+      let commType = 'percentage';
+
+      if (storeId) {
+        const [storeRows] = await conn.query(
+          'SELECT id, merchantId, commissionRate, commissionType FROM stores WHERE id = ? AND deletedAt IS NULL LIMIT 1',
+          [storeId]
+        );
+        if (storeRows.length > 0) {
+          if (!merchantId || isNaN(merchantId)) {
+            merchantId = storeRows[0].merchantId;
+          }
+          commRate = storeRows[0].commissionRate || 5.0;
+          commType = storeRows[0].commissionType || 'percentage';
+        }
+      } else if (merchantId) {
+        const [storeRows] = await conn.query(
+          'SELECT id, commissionRate, commissionType FROM stores WHERE merchantId = ? AND deletedAt IS NULL LIMIT 1',
+          [merchantId]
+        );
+        if (storeRows.length > 0) {
+          storeId = storeRows[0].id;
+          commRate = storeRows[0].commissionRate || 5.0;
+          commType = storeRows[0].commissionType || 'percentage';
+        }
+      }
+
+      // Link client if provided or by phone
+      let clientId = req.body.clientId ? parseInt(req.body.clientId, 10) : null;
+      const clientEmail = (req.body.clientEmail || '').trim();
+
+      if (!clientId && phone) {
+        const [clRows] = await conn.query(
+          "SELECT id, email FROM users WHERE phone = ? AND role = 'client' LIMIT 1",
+          [phone.trim()]
+        );
+        if (clRows.length > 0) {
+          clientId = clRows[0].id;
+          if (clientEmail && (!clRows[0].email || clRows[0].email.trim() === '')) {
+            await conn.query("UPDATE users SET email = ? WHERE id = ?", [clientEmail, clientId]).catch(() => {});
+          }
+        }
+      } else if (clientId && clientEmail) {
+        await conn.query(
+          "UPDATE users SET email = ? WHERE id = ? AND (email IS NULL OR email = '')",
+          [clientEmail, clientId]
+        ).catch(() => {});
+      }
+
+      const { calculateOrderCommission } = require('../utils/commissionCalculator');
+      const commResult = calculateOrderCommission({
+        orderPrice: parseFloat(orderPrice),
+        commissionRate: commRate,
+        commissionType: commType,
+      });
+
+      const paymentMethodVal = req.body.paymentMethod || 'cash';
+      const paymentStatusVal = req.body.paymentStatus || 'pending';
+
+      const rawServiceFee = req.body.serviceFee !== undefined ? parseFloat(req.body.serviceFee) : null;
+      let serviceFee = 5.00;
+      if (rawServiceFee !== null && !isNaN(rawServiceFee)) {
+        serviceFee = rawServiceFee;
+      } else {
+        const [feeRows] = await conn.query("SELECT `value` FROM app_settings WHERE `key` = 'store_service_fee' LIMIT 1");
+        if (feeRows.length > 0 && !isNaN(parseFloat(feeRows[0].value))) {
+          serviceFee = parseFloat(feeRows[0].value);
+        }
+      }
+      const rawTip = req.body.tip !== undefined ? parseFloat(req.body.tip) : 0.00;
+      const tip = isNaN(rawTip) ? 0.00 : rawTip;
 
       const [result] = await conn.query(
         `INSERT INTO orders (
-          orderNumber, merchantId, details, storeDescription, notes, 
-          deliveryAddress, clientName, phone, orderPrice, deliveryFee, 
+          orderNumber, merchantId, clientId, storeId, details, storeDescription, notes, 
+          deliveryAddress, clientName, phone, orderPrice, deliveryFee, serviceFee, tip,
           latitude, longitude, trip_id, status,
-          platformShare, captainShare, autoAssignmentFailed, couponCode, discountApplied
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          platformShare, captainShare, autoAssignmentFailed, couponCode, discountApplied, shift_id,
+          paymentMethod, paymentStatus, platformCommission, merchantNet,
+          commissionRateSnapshot, commissionTypeSnapshot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderNumber,
           merchantId,
+          clientId,
+          storeId,
           details,
           storeDescription,
           notes || null,
@@ -136,6 +243,8 @@ const createOrder = async (req, res, next) => {
           phone,
           parseFloat(orderPrice),
           finalDeliveryFee,
+          serviceFee,
+          tip,
           latitude ? parseFloat(latitude) : null,
           longitude ? parseFloat(longitude) : null,
           tripId ? parseInt(tripId) : null,
@@ -143,22 +252,46 @@ const createOrder = async (req, res, next) => {
           platformShare,
           captainShare,
           appliedCouponCode,
-          discountApplied
+          discountApplied,
+          shiftId || null,
+          paymentMethodVal,
+          paymentStatusVal,
+          commResult.platformCommission,
+          commResult.merchantNet,
+          commResult.rateSnapshot,
+          commResult.typeSnapshot,
         ]
       );
 
       const orderId = result.insertId;
 
+      const creatorName = (req.user && (req.user.firstName || req.user.lastName))
+        ? `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim()
+        : 'العميل';
+
       await logStatusChange(conn, {
         orderId,
         userId: merchantId,
-        userName: 'التاجر',
+        userName: creatorName,
         userRole: 'merchant',
         previousStatus: null,
-        newStatus: statusVal,
+        newStatus: 'created',
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null
       });
+
+      if (isAutoEnabled) {
+        await logStatusChange(conn, {
+          orderId,
+          userId: null,
+          userName: 'التحويل الآلي (النظام)',
+          userRole: 'system',
+          previousStatus: 'created',
+          newStatus: 'Ready For Assignment',
+          latitude: latitude ? parseFloat(latitude) : null,
+          longitude: longitude ? parseFloat(longitude) : null
+        });
+      }
 
       // Update coupon_usages table with actual orderId
       if (appliedCouponCode) {
@@ -177,35 +310,45 @@ const createOrder = async (req, res, next) => {
         const [merchant] = await pool.query('SELECT storeName, firstName, lastName FROM users WHERE id = ?', [merchantId]);
         const m = merchant[0] || {};
         const senderName = m.storeName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || 'تاجر';
-        notifyAdmins(io, '📦 طلب جديد', `طلب جديد #${orderNumber} من ${senderName}`, 'order_new', {
+        notifyAdmins(io, '🛒 طلب جديد قيد المراجعة', `طلب جديد #${orderNumber} من ${senderName} بانتظار مراجعة وتأكيد الإدارة`, 'order_new', {
           type: 'order_new', orderId: orderId.toString(), orderNumber
         });
       } catch (_) { }
 
-      // Emit real-time event with full order data
+      // Emit real-time event with full order data to admins
       try {
         const io = req.app.get('io');
         const eventData = await fetchOrderEventData(orderId);
-        if (eventData && io) {
-          io.to('admins').emit('order_created', eventData);
+        const orderEventPayload = {
+          orderId: orderId.toString(),
+          id: orderId.toString(),
+          orderNumber,
+          shipmentId: null,
+          shiftId: shiftId ? shiftId.toString() : null,
+          captainId: null,
+          orderType: 'regular',
+          status: statusVal,
+          merchantId: merchantId ? merchantId.toString() : null,
+          clientName,
+          phone,
+          deliveryAddress,
+          orderPrice: parseFloat(orderPrice),
+          deliveryFee: finalDeliveryFee,
+          totalAmount: parseFloat(orderPrice) + finalDeliveryFee,
+          createdAt: new Date().toISOString(),
+          ...(eventData || {})
+        };
+        if (io) {
+          io.to('admins').emit('order_created', orderEventPayload);
+          io.to('admins').emit('ORDER_CREATED', orderEventPayload);
+          io.to('admins').emit('dashboard_update');
+          // Note: Shift captains are NOT notified while in 'Pending Review'
         }
-      } catch (_) {}
-
-      // Trigger auto assignment immediately if enabled
-      if (isAutoEnabled) {
-        try {
-          const { triggerAutoAssignment } = require('../utils/autoAssignment');
-          triggerAutoAssignment(null, orderId).catch(err => 
-            console.error('Error triggering auto assignment on order creation:', err)
-          );
-        } catch (err) {
-          console.error('Error importing or calling triggerAutoAssignment:', err);
-        }
-      }
+      } catch (_) { }
 
       res.status(201).json({
         status: 1,
-        message: 'تم إضافة الطلب بنجاح',
+        message: 'تم إرسال الطلب للإدارة بنجاح (قيد المراجعة)',
         data: {
           id: orderId.toString(),
           orderNumber,
@@ -251,8 +394,9 @@ const getOrders = async (req, res, next) => {
     let sql = `
       SELECT o.*, 
              m.firstName as merchantFirstName, m.lastName as merchantLastName, m.storeName as merchantStoreName,
-             m.profileImage as merchantProfileImage, m.phone as merchantPhone, m.address as merchantAddress,
+             m.profileImage as merchantProfileImage, m.phone as merchantPhone, m.storeName as merchantAddress,
              m.latitude as merchantLatitude, m.longitude as merchantLongitude,
+             s.name as realStoreName, s.logo as realStoreLogo, s.address as realStoreAddress,
              c.firstName as captainFirstName, c.lastName as captainLastName, c.profileImage as captainProfileImage, c.phone as captainPhone,
              c.latitude as captainLatitude, c.longitude as captainLongitude,
              a.firstName as assignedAdminFirstName, a.lastName as assignedAdminLastName,
@@ -261,6 +405,7 @@ const getOrders = async (req, res, next) => {
              EXISTS(SELECT 1 FROM reviews WHERE reviews.orderId = o.id AND reviews.reviewerId = ?) as hasReviewed
       FROM orders o
       LEFT JOIN users m ON o.merchantId = m.id
+      LEFT JOIN stores s ON (o.storeId = s.id OR (o.storeId IS NULL AND s.merchantId = o.merchantId AND s.deletedAt IS NULL))
       LEFT JOIN users c ON o.captainId = c.id
       LEFT JOIN users a ON o.assignedAdminId = a.id
       WHERE 1=1
@@ -274,6 +419,9 @@ const getOrders = async (req, res, next) => {
       // Captains only see orders explicitly assigned to them and approved/ready/awaiting payment
       sql += " AND o.captainId = ? AND o.status NOT IN ('Pending Review', 'Ready For Assignment')";
       params.push(userId);
+    } else if (role === 'client') {
+      sql += ' AND (o.clientId = ? OR o.phone = (SELECT phone FROM users WHERE id = ?))';
+      params.push(userId, userId);
     }
 
     if (status && status !== 'الكل') {
@@ -316,7 +464,7 @@ const getOrders = async (req, res, next) => {
       clientName: o.clientName,
       phone: o.phone,
       orderPrice: parseFloat(o.orderPrice),
-      deliveryFee: role === 'captain' ? (parseFloat(o.captainShare) > 0 ? parseFloat(o.captainShare) : parseFloat(o.deliveryFee || 0) * 0.8) : parseFloat(o.deliveryFee),
+      deliveryFee: parseFloat(o.deliveryFee || 0),
       latitude: o.latitude ? parseFloat(o.latitude) : null,
       longitude: o.longitude ? parseFloat(o.longitude) : null,
       merchantLatitude: o.merchantLatitude ? parseFloat(o.merchantLatitude) : null,
@@ -328,8 +476,8 @@ const getOrders = async (req, res, next) => {
       status: o.status,
       createdAt: formatDate(o.createdAt),
       updatedAt: formatDate(o.updatedAt),
-      merchantName: o.merchantStoreName || (o.merchantFirstName ? `${o.merchantFirstName} ${o.merchantLastName}` : null),
-      merchantAvatar: o.merchantProfileImage || null,
+      merchantName: o.realStoreName || o.merchantStoreName || (o.merchantFirstName ? `${o.merchantFirstName} ${o.merchantLastName}` : null),
+      merchantAvatar: o.realStoreLogo || o.merchantProfileImage || null,
       merchantPhone: o.merchantPhone || null,
       captainName: o.captainFirstName ? `${o.captainFirstName} ${o.captainLastName}` : null,
       captainAvatar: o.captainProfileImage || null,
@@ -340,6 +488,19 @@ const getOrders = async (req, res, next) => {
       assignedAdminId: o.assignedAdminId ? o.assignedAdminId.toString() : null,
       assignedAdminName: o.assignedAdminFirstName ? `${o.assignedAdminFirstName} ${o.assignedAdminLastName}`.trim() : null,
       isPaid: o.isPaid === 1 || o.isPaid === true,
+      orderType: o.orderType || (o.storeId ? 'store' : 'normal'),
+      isStoreOrder: (o.orderType === 'store' || o.storeId !== null || !!o.storeOrderStatus),
+      storeId: o.storeId ? o.storeId.toString() : null,
+      storeOrderStatus: o.storeOrderStatus || (o.storeId ? 'NEW' : null),
+      captainTripStatus: o.captainTripStatus || (o.storeId ? (o.captainId ? 'ASSIGNED' : 'PENDING_ASSIGNMENT') : null),
+      acceptedAt: o.acceptedAt ? formatDate(o.acceptedAt) : null,
+      readyAt: o.readyAt ? formatDate(o.readyAt) : null,
+      handedOverAt: o.handedOverAt ? formatDate(o.handedOverAt) : null,
+      captainAssignedAt: o.captainAssignedAt ? formatDate(o.captainAssignedAt) : null,
+      captainHeadingToStoreAt: o.captainHeadingToStoreAt ? formatDate(o.captainHeadingToStoreAt) : null,
+      pickedUpAt: o.pickedUpAt ? formatDate(o.pickedUpAt) : null,
+      captainHeadingToClientAt: o.captainHeadingToClientAt ? formatDate(o.captainHeadingToClientAt) : null,
+      deliveredAt: o.deliveredAt ? formatDate(o.deliveredAt) : null,
     }));
 
     res.status(200).json({
@@ -360,8 +521,9 @@ const getOrderById = async (req, res, next) => {
     const [orders] = await pool.query(
       `SELECT o.*, 
               m.firstName as merchantFirstName, m.lastName as merchantLastName, m.storeName as merchantStoreName,
-              m.profileImage as merchantProfileImage, m.phone as merchantPhone, m.address as merchantAddress,
+              m.profileImage as merchantProfileImage, m.phone as merchantPhone, m.storeName as merchantAddress,
               m.latitude as merchantLatitude, m.longitude as merchantLongitude,
+              s.name as realStoreName, s.logo as realStoreLogo, s.address as realStoreAddress,
               c.firstName as captainFirstName, c.lastName as captainLastName, c.profileImage as captainProfileImage, c.phone as captainPhone,
               c.latitude as captainLatitude, c.longitude as captainLongitude,
               a.firstName as assignedAdminFirstName, a.lastName as assignedAdminLastName,
@@ -370,6 +532,7 @@ const getOrderById = async (req, res, next) => {
               EXISTS(SELECT 1 FROM reviews WHERE reviews.orderId = o.id AND reviews.reviewerId = ?) as hasReviewed
        FROM orders o
        LEFT JOIN users m ON o.merchantId = m.id
+       LEFT JOIN stores s ON (o.storeId = s.id OR (o.storeId IS NULL AND s.merchantId = o.merchantId AND s.deletedAt IS NULL))
        LEFT JOIN users c ON o.captainId = c.id
        LEFT JOIN users a ON o.assignedAdminId = a.id
        WHERE o.id = ?`,
@@ -395,10 +558,16 @@ const getOrderById = async (req, res, next) => {
       [o.id]
     );
 
+    const [orderItems] = await pool.query(
+      'SELECT id, productId, productName, productImage, size, addons, quantity, unitPrice, totalPrice, notes FROM order_items WHERE orderId = ?',
+      [o.id]
+    );
+
     res.status(200).json({
       status: 1,
       data: {
         directPayment: directPayments.length > 0 ? directPayments[0] : null,
+        items: orderItems || [],
         id: o.id.toString(),
         orderNumber: o.orderNumber,
         merchantId: o.merchantId ? o.merchantId.toString() : null,
@@ -413,8 +582,21 @@ const getOrderById = async (req, res, next) => {
         deliveryAddress: o.deliveryAddress,
         clientName: o.clientName,
         phone: o.phone,
-        orderPrice: parseFloat(o.orderPrice),
-        deliveryFee: req.user.role === 'captain' ? (parseFloat(o.captainShare) > 0 ? parseFloat(o.captainShare) : parseFloat(o.deliveryFee || 0) * 0.8) : parseFloat(o.deliveryFee),
+        orderPrice: parseFloat(o.orderPrice || 0),
+        deliveryFee: parseFloat(o.deliveryFee || 0),
+        serviceFee: parseFloat(o.serviceFee || 0),
+        tip: parseFloat(o.tip || 0),
+        discountApplied: parseFloat(o.discountApplied || 0),
+        couponCode: o.couponCode || null,
+        platformCommission: parseFloat(o.platformCommission || 0),
+        merchantNet: parseFloat(o.merchantNet || 0),
+        totalAmount: parseFloat((
+          parseFloat(o.orderPrice || 0) +
+          parseFloat(o.deliveryFee || 0) +
+          parseFloat(o.serviceFee || 0) +
+          parseFloat(o.tip || 0) -
+          parseFloat(o.discountApplied || 0)
+        ).toFixed(2)),
         platformShare: parseFloat(o.platformShare) > 0 ? parseFloat(o.platformShare) : parseFloat(o.deliveryFee || 0) * 0.2,
         captainShare: parseFloat(o.captainShare) > 0 ? parseFloat(o.captainShare) : parseFloat(o.deliveryFee || 0) * 0.8,
         latitude: o.latitude ? parseFloat(o.latitude) : null,
@@ -428,8 +610,8 @@ const getOrderById = async (req, res, next) => {
         status: o.status,
         createdAt: formatDate(o.createdAt),
         updatedAt: formatDate(o.updatedAt),
-        merchantName: o.merchantStoreName || (o.merchantFirstName ? `${o.merchantFirstName} ${o.merchantLastName}` : null),
-        merchantAvatar: o.merchantProfileImage || null,
+        merchantName: o.realStoreName || o.merchantStoreName || (o.merchantFirstName ? `${o.merchantFirstName} ${o.merchantLastName}` : null),
+        merchantAvatar: o.realStoreLogo || o.merchantProfileImage || null,
         merchantPhone: o.merchantPhone || null,
         captainName: o.captainFirstName ? `${o.captainFirstName} ${o.captainLastName}` : null,
         captainAvatar: o.captainProfileImage || null,
@@ -438,8 +620,20 @@ const getOrderById = async (req, res, next) => {
         captainReviewCount: parseInt(o.captainReviewCount || 0),
         captainApprovalStatus: o.captainApprovalStatus || null,
         assignedAdminId: o.assignedAdminId ? o.assignedAdminId.toString() : null,
-        assignedAdminName: o.assignedAdminFirstName ? `${o.assignedAdminFirstName} ${o.assignedAdminLastName}`.trim() : null,
         isPaid: o.isPaid === 1 || o.isPaid === true,
+        orderType: o.orderType || (o.storeId ? 'store' : 'normal'),
+        isStoreOrder: (o.orderType === 'store' || o.storeId !== null),
+        storeId: o.storeId || null,
+        storeOrderStatus: o.storeOrderStatus || (o.storeId ? 'NEW' : null),
+        captainTripStatus: o.captainTripStatus || (o.storeId ? (o.captainId ? 'ASSIGNED' : 'PENDING_ASSIGNMENT') : null),
+        acceptedAt: o.acceptedAt ? formatDate(o.acceptedAt) : null,
+        readyAt: o.readyAt ? formatDate(o.readyAt) : null,
+        handedOverAt: o.handedOverAt ? formatDate(o.handedOverAt) : null,
+        captainAssignedAt: o.captainAssignedAt ? formatDate(o.captainAssignedAt) : null,
+        captainHeadingToStoreAt: o.captainHeadingToStoreAt ? formatDate(o.captainHeadingToStoreAt) : null,
+        pickedUpAt: o.pickedUpAt ? formatDate(o.pickedUpAt) : null,
+        captainHeadingToClientAt: o.captainHeadingToClientAt ? formatDate(o.captainHeadingToClientAt) : null,
+        deliveredAt: o.deliveredAt ? formatDate(o.deliveredAt) : null,
       }
     });
   } catch (error) {
@@ -487,6 +681,9 @@ const updateOrderStatus = async (req, res, next) => {
 
       const deliveryFee = parseFloat(order.deliveryFee || 0);
       const captainShare = parseFloat(order.captainShare || (deliveryFee * 0.8));
+      const platformShare = parseFloat(order.platformShare || (deliveryFee * 0.2));
+      const orderPrice = parseFloat(order.orderPrice || 0);
+      const isOnlinePaid = (order.isPaid === 1 || order.paymentStatus === 'paid' || ['kashier', 'online', 'card', 'wallet'].includes((order.paymentMethod || '').toLowerCase()));
       const finalStatus = 'Completed';
 
       const conn = await pool.getConnection();
@@ -496,23 +693,63 @@ const updateOrderStatus = async (req, res, next) => {
         await conn.query(
           `UPDATE orders 
            SET status = ?, 
-               deliveryConfirmedAt = NOW(), 
+               storeOrderStatus = 'completed',
+               captainTripStatus = 'DELIVERED_SUCCESSFULLY',
+               deliveredAt = COALESCE(deliveredAt, NOW()),
+               completedAt = COALESCE(completedAt, NOW()),
+               deliveryConfirmedAt = COALESCE(deliveryConfirmedAt, NOW()), 
                deliveryLatitude = ?, 
                deliveryLongitude = ? 
            WHERE id = ?`,
           [finalStatus, latitude ? parseFloat(latitude) : null, longitude ? parseFloat(longitude) : null, id]
         );
 
-        await conn.query(
-          'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
-          [captainShare, captainId]
-        );
+        if (isOnlinePaid) {
+          // 1. الدفع الإلكتروني: الكابتن لم يستلم كاش - المنصة تودع نصيب الكابتن 80% في محفظته
+          await conn.query(
+            'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
+            [captainShare, captainId]
+          );
 
-        const txTitle = `رسوم توصيل الطلب #${order.orderNumber}`;
-        await conn.query(
-          "INSERT INTO wallet_transactions (userId, title, amount, type, status) VALUES (?, ?, ?, 'deposit', 'success')",
-          [captainId, txTitle, captainShare]
-        );
+          const txTitleCaptain = `أرباح توصيل طلب إلكتروني #${order.orderNumber}`;
+          await conn.query(
+            "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'deposit', 'success', 'online', ?)",
+            [captainId, txTitleCaptain, captainShare, `#ORD${order.id}`]
+          );
+
+          // 2. إذا كان طلب متجر والتاجر موجود و orderPrice > 0: تودع المنصة قيمة المنتجات في محفظة المتجر
+          if (order.merchantId && orderPrice > 0) {
+            await conn.query(
+              'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
+              [orderPrice, order.merchantId]
+            );
+
+            const txTitleMerchant = `مستحقات بيع طلب إلكتروني #${order.orderNumber}`;
+            await conn.query(
+              "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'deposit', 'success', 'online', ?)",
+              [order.merchantId, txTitleMerchant, orderPrice, `#ORD${order.id}`]
+            );
+          }
+        } else {
+          // 1. الدفع عند الاستلام (كاش): الكابتن استلم 100% من رسوم التوصيل نقداً بيده + رسوم الخدمة + الإكرامية
+          // المنصة تستحق: عمولة 20% + رسوم الخدمة + الإكرامية
+          const serviceFee = parseFloat(order.serviceFee || 0);
+          const tip = parseFloat(order.tip || 0);
+          const totalPlatformDue = Math.round((platformShare + serviceFee + tip) * 100) / 100;
+
+          if (totalPlatformDue > 0) {
+            await conn.query(
+              'UPDATE users SET walletBalance = walletBalance - ? WHERE id = ?',
+              [totalPlatformDue, captainId]
+            );
+
+            const txTitleFee = `عمولة ورسوم المنصة (20% + خدمة + إكرامية) - طلب كاش #${order.orderNumber}`;
+            await conn.query(
+              "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'withdraw', 'success', 'cash_commission', ?)",
+              [captainId, txTitleFee, totalPlatformDue, `#ORD${order.id}`]
+            );
+          }
+        }
 
         await conn.commit();
 
@@ -521,7 +758,16 @@ const updateOrderStatus = async (req, res, next) => {
 
         const io = req.app.get('io');
         if (io) {
-          io.to(`order_${id}`).emit('statusUpdate', { status: finalStatus });
+          io.to(`order_${id}`).emit('statusUpdate', { status: finalStatus, storeOrderStatus: 'completed', captainTripStatus: 'DELIVERED_SUCCESSFULLY' });
+          io.to(`order_${id}`).emit('store_order_status_update', {
+            orderId: id,
+            id: id,
+            orderNumber: order.orderNumber,
+            storeOrderStatus: 'completed',
+            captainTripStatus: 'DELIVERED_SUCCESSFULLY',
+            status: finalStatus,
+            statusArabic: 'مكتمل'
+          });
           io.to(`order_${id}`).emit('chat_deleted', { orderId: id });
           io.to('admins').emit('dashboard_update');
         }
@@ -531,7 +777,7 @@ const updateOrderStatus = async (req, res, next) => {
           if (eventData && io) {
             io.to('admins').emit('order_updated', eventData);
           }
-        } catch (_) {}
+        } catch (_) { }
 
         await pool.query('DELETE FROM messages WHERE orderId = ?', [id]);
 
@@ -543,9 +789,38 @@ const updateOrderStatus = async (req, res, next) => {
         const [captainRows] = await pool.query('SELECT fcmToken FROM users WHERE id = ?', [captainId]);
         const captainFcm = captainRows.length > 0 ? captainRows[0].fcmToken : null;
 
-        const msg = 'تم تسليم الطلب بنجاح واكتماله 🎉';
-        sendNotification(io, order.merchantId, `تم تسليم الطلب #${order.orderNumber}`, msg, 'order', { type: 'order_completed', orderId: id.toString() });
-        sendNotification(io, captainId, 'تم تأكيد تسليم الطلب 🎉', `تم إكمال الطلب #${order.orderNumber}. تم إيداع ${captainShare} ج.م في محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: captainShare.toString() });
+        if (isOnlinePaid) {
+          sendNotification(io, captainId, 'تم تأكيد تسليم الطلب 🎉', `تم إكمال الطلب الإلكتروني #${order.orderNumber}. تم إيداع أرباح التوصيل (${captainShare} ج.م) في محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: captainShare.toString() });
+          if (order.merchantId && orderPrice > 0) {
+            sendNotification(io, order.merchantId, 'تم تسليم الطلب وإيداع مستحقاتك 🎉', `تم إكمال الطلب #${order.orderNumber}. تم إيداع قيمة المنتجات (${orderPrice} ج.م) في محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: orderPrice.toString() });
+          } else if (order.merchantId) {
+            sendNotification(io, order.merchantId, `تم تسليم الطلب #${order.orderNumber}`, 'تم تسليم الطلب للعميل بنجاح واكتمال العملية 🎉', 'order', { type: 'order_completed', orderId: id.toString() });
+          }
+        } else {
+          sendNotification(io, captainId, 'تم تأكيد تسليم الطلب 🎉', `تم إكمال طلب الدفع عند الاستلام #${order.orderNumber}. تم تسجيل عمولة المنصة 20% (${platformShare} ج.م) على محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: platformShare.toString() });
+          if (order.merchantId) {
+            sendNotification(io, order.merchantId, `تم تسليم الطلب #${order.orderNumber}`, 'تم تسليم الطلب للعميل بنجاح واستلام قيمته نقداً 🎉', 'order', { type: 'order_completed', orderId: id.toString() });
+          }
+        }
+
+        // Notify client (صاحب الطلب)
+        if (order.clientId) {
+          sendNotification(
+            io,
+            order.clientId,
+            '🎉 تم تسليم طلبك بنجاح',
+            `تم إكمال تسليم طلبك #${order.orderNumber} بنجاح. شكراً لاستخدامك تطبيقنا ونتمنى لك تجربة ممتعة!`,
+            'order',
+            { type: 'order_completed', orderId: id.toString(), orderNumber: order.orderNumber }
+          );
+          if (io) {
+            io.to(`user_${order.clientId}`).emit('order_status_update', {
+              orderId: id.toString(),
+              orderNumber: order.orderNumber,
+              status: finalStatus
+            });
+          }
+        }
 
         const { notifyAdmins } = require('../utils/adminNotifier');
         await notifyAdmins(io, '✅ طلب مكتمل',
@@ -591,9 +866,8 @@ const updateOrderStatus = async (req, res, next) => {
       const isTimeout = status === 'timeout';
       await resolveAttempt(pool, { orderId: id, captainId: userId, status: isTimeout ? 'timeout' : 'rejected', reason: isTimeout ? 'انتهت مهلة قبول الطلب للكابتن' : 'الكابتن قام برفض الطلب' });
       status = 'Ready For Assignment';
-      sql = "UPDATE orders SET status = 'Ready For Assignment', captainId = NULL, captainApprovalStatus = NULL WHERE id = ?";
+      sql = "UPDATE orders SET status = 'Ready For Assignment', captainId = NULL, captainApprovalStatus = NULL";
       queryParams.length = 0;
-      queryParams.push(id);
       setImmediate(() => {
         triggerAutoAssignment(null, id).catch(err => console.error('Error triggering auto assignment after timeout/reject:', err));
       });
@@ -606,9 +880,11 @@ const updateOrderStatus = async (req, res, next) => {
     }
 
     if (['Picked Up', 'picked up'].includes(status)) {
-      sql += ', pickupConfirmedAt = NOW(), pickupLatitude = ?, pickupLongitude = ?';
+      sql += ', storeOrderStatus = "picked_up", captainTripStatus = "ORDER_PICKED_UP", pickupConfirmedAt = NOW(), pickupLatitude = ?, pickupLongitude = ?';
       queryParams.push(latitude ? parseFloat(latitude) : null);
       queryParams.push(longitude ? parseFloat(longitude) : null);
+    } else if (['Cancelled', 'cancelled', 'ملغي', 'ملغى'].includes(status)) {
+      sql += ', storeOrderStatus = "cancelled", captainTripStatus = "CANCELLED"';
     }
 
     if (['Ready For Assignment'].includes(status)) {
@@ -632,6 +908,7 @@ const updateOrderStatus = async (req, res, next) => {
 
     const captainId = order.captainId || oldCaptainId;
     const merchantId = order.merchantId;
+    const clientId = order.clientId;
 
     await logStatusChange(pool, {
       orderId: id,
@@ -652,6 +929,7 @@ const updateOrderStatus = async (req, res, next) => {
 
     const captainFcm = await fetchFcm(captainId);
     const merchantFcm = await fetchFcm(merchantId);
+    const clientFcm = await fetchFcm(clientId);
 
     const baseData = {
       type: 'order_status_update',
@@ -668,12 +946,32 @@ const updateOrderStatus = async (req, res, next) => {
       if (!targetUserId) return;
       await sendNotification(io, targetUserId, title, body, 'order', { ...baseData, ...extraData });
     };
+
     if (io) {
-      io.to(`order_${id}`).emit('statusUpdate', { status, isCancelled: ['cancelled', 'ملغي', 'ملغية'].includes(status.toString().trim().toLowerCase()) });
+      const isCancelled = ['cancelled', 'ملغي', 'ملغية'].includes(status.toString().trim().toLowerCase());
+      io.to(`order_${id}`).emit('statusUpdate', { status, isCancelled });
       io.to('admins').emit('dashboard_update');
-      if (['cancelled', 'ملغي', 'ملغية'].includes(status.toString().trim().toLowerCase()) && captainId) {
-        io.to(`user_${captainId}`).emit('order_cancelled', { orderId: id.toString(), orderNumber: order.orderNumber });
-        io.to(`captain_${captainId}`).emit('order_cancelled', { orderId: id.toString(), orderNumber: order.orderNumber });
+
+      if (clientId) {
+        io.to(`user_${clientId}`).emit('order_status_update', { orderId: id.toString(), orderNumber: order.orderNumber, status });
+      }
+      if (merchantId) {
+        io.to(`user_${merchantId}`).emit('order_status_update', { orderId: id.toString(), orderNumber: order.orderNumber, status });
+        io.to(`merchant_${merchantId}`).emit('order_status_update', { orderId: id.toString(), orderNumber: order.orderNumber, status });
+      }
+      if (captainId) {
+        io.to(`user_${captainId}`).emit('order_status_update', { orderId: id.toString(), orderNumber: order.orderNumber, status });
+        io.to(`captain_${captainId}`).emit('order_status_update', { orderId: id.toString(), orderNumber: order.orderNumber, status });
+      }
+
+      if (isCancelled) {
+        if (captainId) {
+          io.to(`user_${captainId}`).emit('order_cancelled', { orderId: id.toString(), orderNumber: order.orderNumber });
+          io.to(`captain_${captainId}`).emit('order_cancelled', { orderId: id.toString(), orderNumber: order.orderNumber });
+        }
+        if (clientId) {
+          io.to(`user_${clientId}`).emit('order_cancelled', { orderId: id.toString(), orderNumber: order.orderNumber });
+        }
       }
     }
 
@@ -683,70 +981,144 @@ const updateOrderStatus = async (req, res, next) => {
       if (eventData && io) {
         io.to('admins').emit('order_updated', eventData);
       }
-    } catch (_) {}
+    } catch (_) { }
 
-    // Handle notifications based on new status — all statuses covered
+    // Handle notifications based on new status — all statuses covered for all 3 parties
     try {
       const { notifyAdmins } = require('../utils/adminNotifier');
 
-      if (status === 'Captain Arrived' || status === 'captain arrived') {
+      if (['captain arrived', 'في الطريق للاستلام', 'فى الطريق للاستلام'].includes(norm(status))) {
+        // 1. Merchant
         await notify(merchantFcm, merchantId,
-          `وصل الكابتن إلى موقع الاستلام 📍`,
-          `وصل المندوب ${senderName} إلى موقع استلام الطلب #${order.orderNumber}.`,
+          `الكابتن في الطريق للاستلام 📍`,
+          `المندوب ${senderName} في الطريق لموقع استلام وشراء الطلب #${order.orderNumber}.`,
           { type: 'captain_arrived' }
         );
-        await notifyAdmins(io, '📍 وصول الكابتن للاستلام',
-          `الكابتن ${senderName} وصل إلى موقع استلام الطلب #${order.orderNumber}`,
+        // 2. Client
+        if (clientId) {
+          await notify(clientFcm, clientId,
+            `الكابتن متجه للمتجر 📍`,
+            `الكابتن ${senderName} في طريقه الآن إلى المتجر لاستلام وتجهيز طلبك #${order.orderNumber}.`,
+            { type: 'captain_arrived' }
+          );
+        }
+        // 3. Captain
+        if (captainId) {
+          await notify(captainFcm, captainId,
+            `أنت في الطريق للاستلام 📍`,
+            `توجه إلى موقع المتجر لاستلام وتجهيز الطلب #${order.orderNumber}.`,
+            { type: 'captain_arrived' }
+          );
+        }
+        await notifyAdmins(io, '📍 الكابتن في الطريق للاستلام',
+          `الكابتن ${senderName} في الطريق لموقع استلام الطلب #${order.orderNumber}`,
           'captain_arrived', { type: 'captain_arrived', orderId: id.toString(), orderNumber: order.orderNumber },
           userId
         );
-      } else if (status === 'Picked Up' || status === 'picked up') {
-        // الكابتن شرى الطلب - أخبر التاجر
+      } else if (['picked up', 'تم شراء الطلبات', 'تم استلام الطلب', 'تم الشراء', 'جاهز للتوصيل', 'جاهز'].includes(norm(status))) {
+        // 1. Merchant
         await notify(merchantFcm, merchantId,
-          `تم شراء طلبك 🛒`,
-          `قام المندوب بشراء طلبك #${order.orderNumber} ويتجه إليك قريباً.`,
+          `تم شراء واستلام الطلب 🛒`,
+          `قام المندوب ${senderName} باستلام طلبك #${order.orderNumber} وتجهيزه للتوصيل.`,
           { type: 'order_picked_up' }
         );
+        // 2. Client
+        if (clientId) {
+          await notify(clientFcm, clientId,
+            `🛍️ طلبك جاهز واستلمه الكابتن`,
+            `قام الكابتن ${senderName} باستلام وتجهيز طلبك #${order.orderNumber} وهو جاهز الآن للانطلاق!`,
+            { type: 'order_picked_up' }
+          );
+        }
+        // 3. Captain
+        if (captainId) {
+          await notify(captainFcm, captainId,
+            `📦 تم تجهيز واستلام الطلب`,
+            `تم تسجيل استلام وتجهيز الطلب #${order.orderNumber}. ابدأ التحرك لتوصيله للعميل.`,
+            { type: 'order_picked_up' }
+          );
+        }
         await notifyAdmins(io, '🛒 تم شراء الطلب',
           `الكابتن ${senderName} شرى الطلب #${order.orderNumber}`,
           'order_picked_up', { type: 'order_picked_up', orderId: id.toString(), orderNumber: order.orderNumber },
           userId
         );
-      } else if (status === 'In Transit') {
-        // الكابتن في الطريق - أخبر التاجر
+      } else if (['in transit', 'ongoing', 'فى الطريق للتسليم', 'في الطريق للتسليم', 'خرج للتوصيل'].includes(norm(status))) {
+        // 1. Merchant
         await notify(merchantFcm, merchantId,
-          `جارٍ توصيل طلبك 🚚`,
-          `المندوب في طريقه لتوصيل طلبك #${order.orderNumber}.`,
+          `الطلب خرج للتوصيل 🛵`,
+          `المندوب ${senderName} في طريقه لتوصيل طلبك #${order.orderNumber} إلى العميل.`,
           { type: 'order_in_transit' }
         );
-        await notifyAdmins(io, '🚚 طلب جارٍ توصيله',
+        // 2. Client
+        if (clientId) {
+          await notify(clientFcm, clientId,
+            `🛵💨 طلبك خرج للتوصيل!`,
+            `الكابتن ${senderName} خرج بالطلب #${order.orderNumber} وهو في طريقه إليك الآن. استعد للاستلام!`,
+            { type: 'order_in_transit' }
+          );
+        }
+        // 3. Captain
+        if (captainId) {
+          await notify(captainFcm, captainId,
+            `🛵 أنت في الطريق للتسليم`,
+            `رحلة توصيل الطلب #${order.orderNumber} جارية الآن إلى موقع العميل.`,
+            { type: 'order_in_transit' }
+          );
+        }
+        await notifyAdmins(io, '🛵 طلب في الطريق للتسليم',
           `الطلب #${order.orderNumber} جارٍ توصيله بواسطة ${senderName}`,
           'order_in_transit', { type: 'order_in_transit', orderId: id.toString(), orderNumber: order.orderNumber },
           userId
         );
-      } else if (status === 'Delivered') {
-        // الكابتن وصل - أخبر التاجر بتأكيد الاستلام
+      } else if (['delivered', 'تم التوصيل بنجاح', 'تم التسليم بنجاح', 'تم التسليم'].includes(norm(status))) {
+        // 1. Merchant
         await notify(merchantFcm, merchantId,
-          `تم توصيل طلبك 🎉`,
-          `وصل المندوب بطلبك #${order.orderNumber}. يرجى تأكيد الاستلام.`,
+          `وصل الطلب للعميل 🎉`,
+          `وصل المندوب بطلبك #${order.orderNumber} إلى موقع العميل. يرجى تأكيد استلام الطلب.`,
           { type: 'order_delivered' }
         );
+        // 2. Client
+        if (clientId) {
+          await notify(clientFcm, clientId,
+            `🎉 وصل الكابتن إلى موقعك!`,
+            `وصل الكابتن ${senderName} ومعه طلبك #${order.orderNumber}. يرجى استلام طلبك وتأكيد الاستلام.`,
+            { type: 'order_delivered' }
+          );
+        }
+        // 3. Captain
+        if (captainId) {
+          await notify(captainFcm, captainId,
+            `✅ تم تسجيل الوصول والتسليم`,
+            `تم تسجيل وصولك وتسليم الطلب #${order.orderNumber} بنجاح. بانتظار التأكيد النهائي.`,
+            { type: 'order_delivered' }
+          );
+        }
         await notifyAdmins(io, '✅ طلب تم توصيله',
           `الكابتن ${senderName} وصل الطلب #${order.orderNumber}`,
           'order_delivered', { type: 'order_delivered', orderId: id.toString(), orderNumber: order.orderNumber },
           userId
         );
-      } else if (status === 'Completed') {
-        // تم تأكيد التاجر
+      } else if (['completed', 'مكتمل', 'مكتملة', 'منتهية'].includes(norm(status))) {
+        // 1. Merchant
         await notify(merchantFcm, merchantId,
-          `اكتمل طلبك 🎉`,
-          `تم إكمال طلبك #${order.orderNumber} بنجاح.`,
+          `اكتمل طلبك بنجاح 🎉`,
+          `تم إكمال طلبك #${order.orderNumber} بنجاح واكتمال العملية.`,
           { type: 'order_completed' }
         );
+        // 2. Client
+        if (clientId) {
+          await notify(clientFcm, clientId,
+            `🎉 تم تسليم طلبك بنجاح`,
+            `تم إكمال تسليم طلبك #${order.orderNumber} بنجاح. شكراً لاستخدامك تطبيقنا ونتمنى لك يوماً رائعاً!`,
+            { type: 'order_completed' }
+          );
+        }
+        // 3. Captain
         if (captainId) {
           await notify(captainFcm, captainId,
-            `تم تأكيد التوصيل ✅`,
-            `أكد التاجر استلام الطلب #${order.orderNumber}. جزاك الله خيراً.`,
+            `تم تأكيد التوصيل واكتمال الطلب ✅`,
+            `أكد العميل/التاجر استلام الطلب #${order.orderNumber}. تم إيداع أرباحك في المحفظة.`,
             { type: 'order_completed' }
           );
         }
@@ -755,7 +1127,35 @@ const updateOrderStatus = async (req, res, next) => {
           'order_completed', { type: 'order_completed', orderId: id.toString(), orderNumber: order.orderNumber },
           userId
         );
-      } else if (status === 'Pending Review' || status === 'بانتظار القبول') {
+      } else if (['cancelled', 'ملغي', 'ملغية'].includes(norm(status))) {
+        // 1. Merchant
+        await notify(merchantFcm, merchantId,
+          `❌ تم إلغاء الطلب`,
+          `تم إلغاء الطلب #${order.orderNumber}.`,
+          { type: 'order_cancelled' }
+        );
+        // 2. Client
+        if (clientId) {
+          await notify(clientFcm, clientId,
+            `❌ تم إلغاء الطلب`,
+            `تم إلغاء طلبك #${order.orderNumber}.`,
+            { type: 'order_cancelled' }
+          );
+        }
+        // 3. Captain
+        if (captainId) {
+          await notify(captainFcm, captainId,
+            `❌ تم إلغاء الطلب`,
+            `تم إلغاء مهمة توصيل الطلب #${order.orderNumber}.`,
+            { type: 'order_cancelled' }
+          );
+        }
+        await notifyAdmins(io, '❌ طلب ملغي',
+          `الطلب #${order.orderNumber} تم إلغاؤه`,
+          'order_cancelled', { type: 'order_cancelled', orderId: id.toString(), orderNumber: order.orderNumber },
+          userId
+        );
+      } else if (['pending review', 'بانتظار القبول'].includes(norm(status))) {
         await notify(captainFcm, captainId,
           `تم إلغاء التعيين 🔄`,
           `الطلب #${order.orderNumber} متاح لكابتن آخر`,
@@ -805,6 +1205,17 @@ const updateOrderStatus = async (req, res, next) => {
     if (status === 'Ready For Assignment') {
       const { triggerAutoAssignment } = require('../utils/autoAssignment');
       triggerAutoAssignment(null, id).catch(err => console.error('Error triggering auto assignment:', err.message));
+      // Notify shift captains if linked
+      try {
+        const [oRows] = await pool.query('SELECT shift_id, orderNumber, orderPrice, deliveryFee FROM orders WHERE id = ?', [id]);
+        if (oRows.length > 0 && oRows[0].shift_id && io) {
+          const shiftId = oRows[0].shift_id;
+          const payload = { id: id.toString(), type: 'order', orderNumber: oRows[0].orderNumber, status: 'Ready For Assignment' };
+          io.to(`shift_${shiftId}`).emit('ORDER_CREATED', payload);
+          io.to(`shift:${shiftId}`).emit('ORDER_CREATED', payload);
+        }
+      } catch (_) {}
+      if (io) io.to('admins').emit('dashboard_update');
     }
 
     res.status(200).json({
@@ -877,7 +1288,7 @@ const confirmPickup = async (req, res, next) => {
       if (eventData && io) {
         io.to('admins').emit('order_updated', eventData);
       }
-    } catch (_) {}
+    } catch (_) { }
 
     if (order.captainId) {
       sendNotification(io, order.captainId, 'تم تأكيد الاستلام 📦', `أكد التاجر استلام الطلب #${order.orderNumber}. يمكنك الآن بدء التوصيل.`, 'order', { type: 'order_picked_up', orderId: id.toString() });
@@ -898,7 +1309,8 @@ const confirmDelivery = async (req, res, next) => {
     const pool = getPool();
     const { id } = req.params;
     const { latitude, longitude } = req.body;
-    const merchantId = req.user.id;
+    const userId = req.user.id;
+    const role = req.user.role;
 
     const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [id]);
     if (orders.length === 0) {
@@ -906,18 +1318,17 @@ const confirmDelivery = async (req, res, next) => {
     }
 
     const order = orders[0];
-    if (order.merchantId !== merchantId && req.user.role !== 'admin') {
+    if (Number(order.merchantId) !== Number(userId) && Number(order.captainId) !== Number(userId) && !['admin', 'employee'].includes(role)) {
       return res.status(403).json({ status: 0, message: 'غير مصرح لك بتأكيد تسليم هذا الطلب' });
     }
 
-    // التاجر يؤكد فقط بعد أن يمارك الكابتن الحالة "Delivered"
-    const allowedStatuses = ['Delivered'];
-    if (!allowedStatuses.includes(order.status)) {
-      return res.status(400).json({ status: 0, message: 'لا يمكن تأكيد التسليم - يجب أن يكون المندوب قد سلّم الطلب أولاً' });
+    const allowedStatuses = ['picked up', 'in transit', 'delivered', 'completed', 'تم شراء الطلبات', 'تم استلام الطلب', 'في الطريق للتسليم', 'فى الطريق للتسليم', 'تم التوصيل بنجاح', 'تم التسليم بنجاح', 'مكتمل'];
+    if (!allowedStatuses.includes(norm(order.status))) {
+      return res.status(400).json({ status: 0, message: 'لا يمكن تأكيد تسليم الطلب في الحالة الحالية' });
     }
 
     const newStatus = 'Completed';
-    const captainId = order.captainId;
+    const captainId = order.captainId || (role === 'captain' ? userId : null);
 
     if (!captainId) {
       return res.status(400).json({ status: 0, message: 'لا يوجد كابتن معين لهذا الطلب' });
@@ -925,6 +1336,9 @@ const confirmDelivery = async (req, res, next) => {
 
     const deliveryFee = parseFloat(order.deliveryFee || 0);
     const captainShare = parseFloat(order.captainShare || (deliveryFee * 0.8));
+    const platformShare = parseFloat(order.platformShare || (deliveryFee * 0.2));
+    const orderPrice = parseFloat(order.orderPrice || 0);
+    const isOnlinePaid = (order.isPaid === 1 || order.paymentStatus === 'paid' || ['kashier', 'online', 'card', 'wallet'].includes((order.paymentMethod || '').toLowerCase()));
 
     const conn = await pool.getConnection();
     try {
@@ -940,24 +1354,60 @@ const confirmDelivery = async (req, res, next) => {
         [newStatus, latitude ? parseFloat(latitude) : null, longitude ? parseFloat(longitude) : null, id]
       );
 
-      await conn.query(
-        'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
-        [captainShare, captainId]
-      );
+      if (isOnlinePaid) {
+        // 1. الدفع الإلكتروني: الكابتن لم يستلم كاش - المنصة تودع نصيب الكابتن 80% في محفظته
+        await conn.query(
+          'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
+          [captainShare, captainId]
+        );
 
-      const txTitle = `رسوم توصيل الطلب #${order.orderNumber}`;
-      await conn.query(
-        "INSERT INTO wallet_transactions (userId, title, amount, type, status) VALUES (?, ?, ?, 'deposit', 'success')",
-        [captainId, txTitle, captainShare]
-      );
+        const txTitleCaptain = `أرباح توصيل طلب إلكتروني #${order.orderNumber}`;
+        await conn.query(
+          "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'deposit', 'success', 'online', ?)",
+          [captainId, txTitleCaptain, captainShare, `#ORD${order.id}`]
+        );
+
+        // 2. إذا كان طلب متجر والتاجر موجود و orderPrice > 0: تودع المنصة قيمة المنتجات في محفظة المتجر
+        if (order.merchantId && orderPrice > 0) {
+          await conn.query(
+            'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
+            [orderPrice, order.merchantId]
+          );
+
+          const txTitleMerchant = `مستحقات بيع طلب إلكتروني #${order.orderNumber}`;
+          await conn.query(
+            "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'deposit', 'success', 'online', ?)",
+            [order.merchantId, txTitleMerchant, orderPrice, `#ORD${order.id}`]
+          );
+        }
+      } else {
+        // 1. الدفع عند الاستلام (كاش): الكابتن استلم 100% من رسوم التوصيل نقداً بيده + رسوم الخدمة + الإكرامية
+        // المنصة تستحق: عمولة 20% + رسوم الخدمة + الإكرامية
+        const serviceFee = parseFloat(order.serviceFee || 0);
+        const tip = parseFloat(order.tip || 0);
+        const totalPlatformDue = Math.round((platformShare + serviceFee + tip) * 100) / 100;
+
+        if (totalPlatformDue > 0) {
+          await conn.query(
+            'UPDATE users SET walletBalance = walletBalance - ? WHERE id = ?',
+            [totalPlatformDue, captainId]
+          );
+
+          const txTitleFee = `عمولة ورسوم المنصة (20% + خدمة + إكرامية) - طلب كاش #${order.orderNumber}`;
+          await conn.query(
+            "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'withdraw', 'success', 'cash_commission', ?)",
+            [captainId, txTitleFee, totalPlatformDue, `#ORD${order.id}`]
+          );
+        }
+      }
 
       await conn.commit();
 
       await logStatusChange(pool, {
         orderId: id,
-        userId: merchantId,
-        userName: req.user.role === 'admin' ? 'المدير' : 'التاجر',
-        userRole: req.user.role,
+        userId: userId,
+        userName: role === 'admin' ? 'المدير' : (role === 'captain' ? 'الكابتن' : 'التاجر'),
+        userRole: role,
         previousStatus: order.status,
         newStatus: newStatus,
         latitude: latitude ? parseFloat(latitude) : null,
@@ -980,15 +1430,46 @@ const confirmDelivery = async (req, res, next) => {
         if (eventData && io) {
           io.to('admins').emit('order_updated', eventData);
         }
-      } catch (_) {}
+      } catch (_) { }
 
       await pool.query('DELETE FROM messages WHERE orderId = ?', [id]);
 
-      sendNotification(io, captainId, 'تم تأكيد تسليم الطلب 🎉', `أكد التاجر تسليم الطلب #${order.orderNumber}. تم إيداع ${captainShare} ج.م في محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: captainShare.toString() });
+      if (isOnlinePaid) {
+        sendNotification(io, captainId, 'تم تأكيد تسليم الطلب 🎉', `تم تأكيد تسليم الطلب الإلكتروني #${order.orderNumber}. تم إيداع ${captainShare} ج.م في محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: captainShare.toString() });
+        if (order.merchantId && orderPrice > 0) {
+          sendNotification(io, order.merchantId, 'تم تسليم الطلب وإيداع مستحقاتك 🎉', `تم إكمال الطلب #${order.orderNumber}. تم إيداع قيمة المنتجات (${orderPrice} ج.م) في محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: orderPrice.toString() });
+        } else if (order.merchantId) {
+          sendNotification(io, order.merchantId, `تم تسليم الطلب #${order.orderNumber}`, 'تم تسليم الطلب للعميل بنجاح واكتمال العملية 🎉', 'order', { type: 'order_completed', orderId: id.toString() });
+        }
+      } else {
+        sendNotification(io, captainId, 'تم تأكيد تسليم الطلب 🎉', `تم تأكيد تسليم الطلب الكاش #${order.orderNumber}. تم تسجيل عمولة المنصة 20% (${platformShare} ج.م) على محفظتك.`, 'order', { type: 'order_completed', orderId: id.toString(), amount: platformShare.toString() });
+        if (order.merchantId) {
+          sendNotification(io, order.merchantId, `تم تسليم الطلب #${order.orderNumber}`, 'تم تسليم الطلب للعميل بنجاح واستلام قيمته نقداً 🎉', 'order', { type: 'order_completed', orderId: id.toString() });
+        }
+      }
+
+      // Notify Client (صاحب الطلب)
+      if (order.clientId) {
+        sendNotification(
+          io,
+          order.clientId,
+          '🎉 تم تسليم طلبك بنجاح',
+          `تم إكمال تسليم طلبك #${order.orderNumber} بنجاح. شكراً لثقتك بنا ونتمنى لك تجربة رائعة!`,
+          'order',
+          { type: 'order_completed', orderId: id.toString(), orderNumber: order.orderNumber }
+        );
+        if (io) {
+          io.to(`user_${order.clientId}`).emit('order_status_update', {
+            orderId: id.toString(),
+            orderNumber: order.orderNumber,
+            status: newStatus
+          });
+        }
+      }
 
       res.status(200).json({
         status: 1,
-        message: 'تم تأكيد تسليم الطلب بنجاح وإيداع مستحقات المندوب في محفظته'
+        message: 'تم تأكيد تسليم الطلب بنجاح وتسوية المعاملة المالية في المحفظة'
       });
     } catch (err) {
       await conn.rollback();
@@ -1028,7 +1509,13 @@ const handleCaptainResponse = async (req, res, next) => {
         return res.status(403).json({ status: 0, message: 'غير مصرح لك بالرد على تكليف هذا الطلب' });
       }
 
-      if (order.captainApprovalStatus !== 'pending') {
+      const isPending = order.captainApprovalStatus === 'pending' || 
+                        order.status === 'في انتظار المندوب' || 
+                        order.status === 'بانتظار القبول' || 
+                        order.status === 'في انتظار القبول' ||
+                        order.status === 'assigned to captain';
+
+      if (!isPending) {
         await conn.rollback();
         return res.status(400).json({ status: 0, message: 'تم الرد على هذا التكليف مسبقاً أو غير معلق' });
       }
@@ -1041,9 +1528,14 @@ const handleCaptainResponse = async (req, res, next) => {
       const captainName = captainRows.length > 0 ? `${captainRows[0].firstName || ''} ${captainRows[0].lastName || ''}`.trim() : 'كابتن';
 
       if (response === 'accept') {
+        const newAcceptedStatus = 'جاري التنفيذ';
         const [updateResult] = await conn.query(
-          "UPDATE orders SET captainApprovalStatus = 'accepted' WHERE id = ? AND captainId = ? AND captainApprovalStatus = 'pending'",
-          [id, captainId]
+          `UPDATE orders 
+           SET captainApprovalStatus = 'accepted', 
+               status = ?,
+               shift_id = COALESCE(shift_id, (SELECT sc.shiftId FROM shift_captains sc JOIN shifts s ON sc.shiftId = s.id WHERE sc.captainId = ? AND s.status = 'active' AND sc.clockInTime IS NOT NULL AND sc.clockOutTime IS NULL LIMIT 1))
+           WHERE id = ? AND captainId = ?`,
+          [newAcceptedStatus, captainId, id, captainId]
         );
         if (updateResult.affectedRows === 0) {
           await conn.rollback();
@@ -1052,12 +1544,23 @@ const handleCaptainResponse = async (req, res, next) => {
 
         await conn.commit();
 
-        const { resolveAttempt } = require('../utils/autoAssignment');
-        await resolveAttempt(pool, { orderId: id, captainId, status: 'accepted', reason: 'Captain accepted assignment' });
+        try {
+          const { resolveAttempt } = require('../utils/autoAssignment');
+          await resolveAttempt(pool, { orderId: id, captainId, status: 'accepted', reason: 'Captain accepted assignment' });
+        } catch (_) {}
 
         if (io) {
-          io.to(targetRoom).emit('statusUpdate', { status: order.status });
+          io.to(targetRoom).emit('statusUpdate', { status: newAcceptedStatus, captainId });
           io.to(targetRoom).emit('captain_response', { response: 'accept', captainId });
+          if (order.merchantId) {
+            io.to(`user_${order.merchantId}`).emit('order_status_update', {
+              orderId: id.toString(),
+              orderNumber: order.orderNumber,
+              status: newAcceptedStatus,
+              captainId,
+              captainName
+            });
+          }
           io.to('admins').emit('dashboard_update');
         }
 
@@ -1071,23 +1574,78 @@ const handleCaptainResponse = async (req, res, next) => {
           { type: 'captain_accepted', orderId: id.toString(), orderNumber: order.orderNumber, captainName, price: orderPrice }
         );
 
+        // Notify Merchant immediately about captain acceptance
+        if (order.merchantId) {
+          try {
+            await sendNotification(
+              io,
+              order.merchantId,
+              `الكابتن قبل طلبك #${order.orderNumber} 🛵`,
+              `قام الكابتن ${captainName} بقبول مهمة توصيل الطلب #${order.orderNumber} وهو في الطريق للاستلام والتوصيل.`,
+              'order',
+              {
+                type: 'captain_accepted',
+                orderId: id.toString(),
+                orderNumber: order.orderNumber,
+                captainId: captainId.toString(),
+                captainName
+              }
+            );
+          } catch (mErr) {
+            console.error('Error notifying merchant of captain acceptance:', mErr);
+          }
+        }
+
+        // Notify Client immediately about captain acceptance
+        if (order.clientId) {
+          try {
+            await sendNotification(
+              io,
+              order.clientId,
+              `🛵 تم قبول طلبك من الكابتن`,
+              `قام الكابتن ${captainName} بقبول توصيل طلبك #${order.orderNumber} وبدأ في التحرك لتنفيذه.`,
+              'order',
+              {
+                type: 'captain_accepted',
+                orderId: id.toString(),
+                orderNumber: order.orderNumber,
+                captainId: captainId.toString(),
+                captainName
+              }
+            );
+            if (io) {
+              io.to(`user_${order.clientId}`).emit('order_status_update', {
+                orderId: id.toString(),
+                orderNumber: order.orderNumber,
+                status: newAcceptedStatus,
+                captainId,
+                captainName
+              });
+            }
+          } catch (cErr) {
+            console.error('Error notifying client of captain acceptance:', cErr);
+          }
+        }
+
         // Emit granular order_updated event
         try {
           const eventData = await fetchOrderEventData(id);
           if (eventData && io) {
             io.to('admins').emit('order_updated', eventData);
           }
-        } catch (_) {}
+        } catch (_) { }
 
         res.status(200).json({
           status: 1,
-          message: 'تم قبول تكليف الطلب بنجاح'
+          message: 'تم قبول تكليف الطلب بنجاح',
+          data: { status: newAcceptedStatus }
         });
       } else {
-        // Reject: reset captainId, captainApprovalStatus, and return status to Ready For Assignment
+        // Reject: reset captainId, captainApprovalStatus, and return status to 'جديد'
+        const resetStatus = 'جديد';
         const [updateResult] = await conn.query(
-          "UPDATE orders SET captainId = NULL, captainApprovalStatus = NULL, status = 'Ready For Assignment' WHERE id = ? AND captainId = ? AND captainApprovalStatus = 'pending'",
-          [id, captainId]
+          "UPDATE orders SET captainId = NULL, captainApprovalStatus = NULL, status = ? WHERE id = ? AND captainId = ?",
+          [resetStatus, id, captainId]
         );
         if (updateResult.affectedRows === 0) {
           await conn.rollback();
@@ -1096,27 +1654,58 @@ const handleCaptainResponse = async (req, res, next) => {
 
         await conn.commit();
 
-        const { resolveAttempt, triggerAutoAssignment } = require('../utils/autoAssignment');
-        await resolveAttempt(pool, { orderId: id, captainId, status: 'rejected', reason: 'Captain rejected assignment' });
-
-        // Notify all admins and employees
-        const { notifyAdmins } = require('../utils/adminNotifier');
-        const orderPrice = parseFloat(order.orderPrice || 0).toFixed(2);
-        notifyAdmins(io,
-          `❌ رفض تكليف طلب #${order.orderNumber}`,
-          `الكابتن ${captainName} رفض تكليف الطلب رقم ${order.orderNumber} بقيمة ${orderPrice} ج.م`,
-          'system',
-          { type: 'captain_rejected', orderId: id.toString(), orderNumber: order.orderNumber, captainName, price: orderPrice }
-        );
+        try {
+          const { resolveAttempt, triggerAutoAssignment } = require('../utils/autoAssignment');
+          await resolveAttempt(pool, { orderId: id, captainId, status: 'rejected', reason: 'Captain rejected assignment' });
+          triggerAutoAssignment(null, id).catch(err => console.error('Error triggering auto assignment after reject:', err.message));
+        } catch (_) {}
 
         if (io) {
-          io.to(targetRoom).emit('statusUpdate', { status: 'Ready For Assignment' });
+          io.to(targetRoom).emit('statusUpdate', { status: resetStatus, captainId: null });
           io.to(targetRoom).emit('captain_response', { response: 'reject', captainId });
+          if (order.merchantId) {
+            io.to(`user_${order.merchantId}`).emit('order_status_update', {
+              orderId: id.toString(),
+              orderNumber: order.orderNumber,
+              status: resetStatus,
+              captainId: null,
+              message: `اعتذر الكابتن ${captainName} عن التوصيل`
+            });
+          }
           io.to('admins').emit('dashboard_update');
         }
 
-        // Instantly trigger auto-assignment to search for the next captain in the background
-        triggerAutoAssignment(null, id).catch(err => console.error('Error triggering auto assignment after reject:', err.message));
+        // Notify merchant about rejection so they can re-assign
+        if (order.merchantId) {
+          try {
+            await sendNotification(
+              io,
+              order.merchantId,
+              `اعتذار الكابتن عن الطلب #${order.orderNumber} ⚠️`,
+              `اعتذر الكابتن ${captainName} عن استلام الطلب #${order.orderNumber}. يمكنك الآن تعيين كابتن آخر للتوصيل.`,
+              'order',
+              {
+                type: 'captain_rejected',
+                orderId: id.toString(),
+                orderNumber: order.orderNumber,
+                captainId: captainId.toString(),
+                captainName
+              }
+            );
+          } catch (_) {}
+        }
+
+        // Notify all admins
+        try {
+          const { notifyAdmins } = require('../utils/adminNotifier');
+          const orderPrice = parseFloat(order.orderPrice || 0).toFixed(2);
+          notifyAdmins(io,
+            `❌ رفض تكليف طلب #${order.orderNumber}`,
+            `الكابتن ${captainName} رفض تكليف الطلب رقم ${order.orderNumber} بقيمة ${orderPrice} ج.م`,
+            'system',
+            { type: 'captain_rejected', orderId: id.toString(), orderNumber: order.orderNumber, captainName, price: orderPrice }
+          );
+        } catch (_) {}
 
         // Emit granular order_updated event
         try {
@@ -1124,7 +1713,7 @@ const handleCaptainResponse = async (req, res, next) => {
           if (eventData && io) {
             io.to('admins').emit('order_updated', eventData);
           }
-        } catch (_) {}
+        } catch (_) { }
 
         res.status(200).json({
           status: 1,
@@ -1216,7 +1805,7 @@ const claimOrder = async (req, res, next) => {
       if (eventData && io) {
         io.to('admins').emit('order_updated', eventData);
       }
-    } catch (_) {}
+    } catch (_) { }
 
     res.status(200).json({
       status: 1,
@@ -1275,12 +1864,20 @@ const updateOrder = async (req, res, next) => {
   try {
     const pool = getPool();
     const { id } = req.params;
-    const merchantId = req.user.id;
+    const isAdminOrEmp = req.user.role === 'admin' || req.user.role === 'employee';
+    const userId = req.user.id;
 
-    const [orders] = await pool.query(
-      'SELECT * FROM orders WHERE id = ? AND merchantId = ?',
-      [id, merchantId]
-    );
+    let orders;
+    if (isAdminOrEmp) {
+      const [rows] = await pool.query('SELECT * FROM orders WHERE id = ?', [id]);
+      orders = rows;
+    } else {
+      const [rows] = await pool.query(
+        'SELECT * FROM orders WHERE id = ? AND merchantId = ?',
+        [id, userId]
+      );
+      orders = rows;
+    }
 
     if (orders.length === 0) {
       return res.status(404).json({
@@ -1290,7 +1887,7 @@ const updateOrder = async (req, res, next) => {
     }
 
     const order = orders[0];
-    if (order.status !== 'Pending Review') {
+    if (!isAdminOrEmp && order.status !== 'Pending Review') {
       return res.status(400).json({
         status: 0,
         message: 'لا يمكن تعديل الطلب بعد قبوله أو البدء في تنفيذه'
@@ -1307,7 +1904,8 @@ const updateOrder = async (req, res, next) => {
       orderPrice,
       deliveryFee,
       latitude,
-      longitude
+      longitude,
+      merchantId
     } = req.body;
 
     if (!details || !storeDescription || !deliveryAddress || !clientName || !phone || orderPrice === undefined || deliveryFee === undefined) {
@@ -1317,12 +1915,17 @@ const updateOrder = async (req, res, next) => {
       });
     }
 
+    const updatedMerchantId = (isAdminOrEmp && merchantId) ? parseInt(merchantId, 10) : order.merchantId;
+    const updatedStoreId = req.body.storeId !== undefined ? (req.body.storeId ? parseInt(req.body.storeId, 10) : null) : order.storeId;
+    const updatedClientId = req.body.clientId !== undefined ? (req.body.clientId ? parseInt(req.body.clientId, 10) : null) : order.clientId;
+
     await pool.query(
       `UPDATE orders SET 
         details = ?, storeDescription = ?, notes = ?, 
         deliveryAddress = ?, clientName = ?, phone = ?, 
         orderPrice = ?, deliveryFee = ?, 
-        latitude = ?, longitude = ?
+        latitude = ?, longitude = ?,
+        merchantId = ?, storeId = ?, clientId = ?
       WHERE id = ?`,
       [
         details,
@@ -1335,6 +1938,9 @@ const updateOrder = async (req, res, next) => {
         parseFloat(deliveryFee),
         latitude ? parseFloat(latitude) : null,
         longitude ? parseFloat(longitude) : null,
+        updatedMerchantId,
+        updatedStoreId,
+        updatedClientId,
         id
       ]
     );
@@ -1349,7 +1955,7 @@ const updateOrder = async (req, res, next) => {
       if (eventData && io) {
         io.to('admins').emit('order_updated', eventData);
       }
-    } catch (_) {}
+    } catch (_) { }
 
     res.status(200).json({
       status: 1,

@@ -16,9 +16,12 @@ async function fetchShipmentEventData(id) {
   const pool = getPool();
   const [rows] = await pool.query(`
     SELECT s.*,
+      COALESCE(s.merchantPhone, m.phone) as resolvedMerchantPhone,
       m.storeName as merchantName,
       m.firstName as merchantFirstName,
       m.lastName as merchantLastName,
+      COALESCE(s.merchantLatitude, m.latitude) as resolvedMerchantLatitude,
+      COALESCE(s.merchantLongitude, m.longitude) as resolvedMerchantLongitude,
       a.firstName as assignedAdminFirstName,
       a.lastName as assignedAdminLastName
     FROM shipments s
@@ -28,44 +31,86 @@ async function fetchShipmentEventData(id) {
   `, [id]);
   if (rows.length === 0) return null;
   const s = rows[0];
+
+  const [images] = await pool.query(
+    'SELECT imageUrl FROM shipment_images WHERE shipmentId = ?',
+    [s.id]
+  );
+
   return {
     id: s.id.toString(),
     shipmentNumber: s.shipmentNumber,
     merchantId: s.merchantId ? s.merchantId.toString() : null,
+    merchantPhone: s.resolvedMerchantPhone || null,
+    clientPhone: s.resolvedMerchantPhone || null,
     captainId: s.captainId ? s.captainId.toString() : null,
     tripId: s.trip_id ? s.trip_id.toString() : null,
     title: s.title || '',
     fromAddress: s.fromAddress,
     toAddress: s.toAddress,
     fromGovernorate: s.fromGovernorate || '',
+    fromArea: s.fromArea || '',
     toGovernorate: s.toGovernorate || '',
+    toArea: s.toArea || '',
+    merchantLatitude: s.resolvedMerchantLatitude ? parseFloat(s.resolvedMerchantLatitude) : null,
+    merchantLongitude: s.resolvedMerchantLongitude ? parseFloat(s.resolvedMerchantLongitude) : null,
+    toLatitude: s.toLatitude ? parseFloat(s.toLatitude) : null,
+    toLongitude: s.toLongitude ? parseFloat(s.toLongitude) : null,
+    goodsPrice: parseFloat(s.goodsPrice || 0),
     price: parseFloat(s.price || 0),
     weight: s.weight ? parseFloat(s.weight) : null,
     notes: s.notes || '',
+    isWithoutAdvance: s.isWithoutAdvance === 1 || s.isWithoutAdvance === true,
+    images: images.map(img => img.imageUrl),
     merchantName: s.merchantName || (s.merchantFirstName ? `${s.merchantFirstName} ${s.merchantLastName}` : ''),
     status: s.status,
     assignedAdminId: s.assignedAdminId ? s.assignedAdminId.toString() : null,
     assignedAdminName: s.assignedAdminFirstName ? `${s.assignedAdminFirstName} ${s.assignedAdminLastName}`.trim() : null,
-    isPaid: s.isPaid === 1 || s.isPaid === true,
     createdAt: formatDate(s.createdAt),
     updatedAt: formatDate(s.updatedAt),
   };
 }
 
-// 1. CREATE SHIPMENT (Merchant only)
+// 1. CREATE SHIPMENT (Merchant, Admin, Employee)
 const createShipment = async (req, res, next) => {
   try {
     const pool = getPool();
-    const merchantId = req.user.id;
+    const isAdminOrEmp = req.user.role === 'admin' || req.user.role === 'employee';
+    const merchantId = (isAdminOrEmp && req.body.merchantId) ? parseInt(req.body.merchantId, 10) : req.user.id;
+
+    // Check operating hours & service availability (admin/employee can bypass)
+    if (!isAdminOrEmp) {
+      const { checkServiceAvailability } = require('../utils/serviceHoursHelper');
+      const serviceCheck = await checkServiceAvailability('shipments');
+      if (!serviceCheck.isOpen) {
+        if (req.files && req.files.length > 0) {
+          const fs = require('fs');
+          const path = require('path');
+          for (const file of req.files) {
+            try {
+              fs.unlinkSync(path.join(__dirname, '..', 'uploads', file.filename));
+            } catch (_) {}
+          }
+        }
+        return res.status(400).json({
+          status: 0,
+          code: 'SERVICE_CLOSED',
+          message: serviceCheck.reason || 'خدمة الشحن غير متاحة حالياً نظراً لانتهاء مواعيد العمل اليومية.'
+        });
+      }
+    }
 
     const {
       title,
+      merchantPhone,
       fromAddress,
       toAddress,
       fromGovernorate,
       fromArea,
       toGovernorate,
       toArea,
+      goodsPrice,
+      itemPrice,
       price,
       weight,
       notes,
@@ -79,8 +124,9 @@ const createShipment = async (req, res, next) => {
       couponCode
     } = req.body;
 
-    if (!title || title.trim().length === 0 || !req.files || req.files.length === 0 || !fromAddress || !toAddress || !price) {
-      if (req.files && req.files.length > 0) {
+    const hasImages = req.files && req.files.length > 0;
+    if (!title || title.trim().length === 0 || (!isAdminOrEmp && !hasImages) || !fromAddress || !toAddress || !price) {
+      if (hasImages) {
         const fs = require('fs');
         const path = require('path');
         for (const file of req.files) {
@@ -93,7 +139,7 @@ const createShipment = async (req, res, next) => {
       let msg = 'عنوان الاستلام، عنوان التسليم، وسعر التوصيل مطلوبة';
       if (!title || title.trim().length === 0) {
         msg = 'محتوى الشحنة مطلوب';
-      } else if (!req.files || req.files.length === 0) {
+      } else if (!hasImages && !isAdminOrEmp) {
         msg = 'صورة الشحنة مطلوبة';
       }
 
@@ -109,6 +155,15 @@ const createShipment = async (req, res, next) => {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+
+      // Resolve merchant phone if not explicitly provided
+      let finalMerchantPhone = merchantPhone ? merchantPhone.toString().trim() : null;
+      if (!finalMerchantPhone) {
+        const [mRows] = await conn.query('SELECT phone FROM users WHERE id = ?', [merchantId]);
+        if (mRows.length > 0 && mRows[0].phone) {
+          finalMerchantPhone = mRows[0].phone;
+        }
+      }
 
       // Check if auto-assignment is enabled
       const [autoSettings] = await conn.query(
@@ -140,21 +195,36 @@ const createShipment = async (req, res, next) => {
         }
       }
 
-      const statusVal = isAutoEnabled ? 'Ready For Assignment' : 'Pending Review';
-      const platformShare = isAutoEnabled ? finalPrice * 0.20 : null;
-      const captainShare = isAutoEnabled ? finalPrice * 0.80 : null;
+      // All shipments start in 'Pending Review' for admin confirmation
+      const statusVal = 'Pending Review';
+      const platformShare = finalPrice * 0.20;
+      const captainShare = finalPrice * 0.80;
+
+      const isNoAdvance = isWithoutAdvance === 'true' || isWithoutAdvance === true || isWithoutAdvance === 1;
+      const finalGoodsPrice = isNoAdvance ? 0.00 : (parseFloat(goodsPrice || itemPrice || 0) || 0.00);
+
+      const serviceFee = req.body.serviceFee !== undefined ? (parseFloat(req.body.serviceFee) || 0.00) : 0.00;
+      const tip = req.body.tip !== undefined ? (parseFloat(req.body.tip) || 0.00) : 0.00;
+
+      const { findActiveShiftForOrder } = require('../utils/shiftMatcher');
+      const shiftId = await findActiveShiftForOrder({
+        merchantId,
+        serviceArea: fromArea || fromGovernorate,
+        conn,
+      });
 
       const [result] = await conn.query(
         `INSERT INTO shipments (
-          shipmentNumber, merchantId, title, fromAddress, toAddress, 
+          shipmentNumber, merchantId, merchantPhone, title, fromAddress, toAddress, 
           fromGovernorate, fromArea, toGovernorate, toArea, 
-          price, weight, notes, isFragile, isWithoutAdvance, 
+          price, goodsPrice, serviceFee, tip, weight, notes, isFragile, isWithoutAdvance, 
           toLatitude, toLongitude, merchantLatitude, merchantLongitude, trip_id, status,
-          platformShare, captainShare, autoAssignmentFailed, couponCode, discountApplied
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          platformShare, captainShare, autoAssignmentFailed, couponCode, discountApplied, shift_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
         [
           shipmentNumber,
           merchantId,
+          finalMerchantPhone,
           title || null,
           fromAddress,
           toAddress,
@@ -163,10 +233,13 @@ const createShipment = async (req, res, next) => {
           toGovernorate || null,
           toArea || null,
           finalPrice,
+          finalGoodsPrice,
+          serviceFee,
+          tip,
           weight ? parseFloat(weight) : null,
           notes || null,
           isFragile === 'true' || isFragile === true || isFragile === 1 ? 1 : 0,
-          isWithoutAdvance === 'true' || isWithoutAdvance === true || isWithoutAdvance === 1 ? 1 : 0,
+          isNoAdvance ? 1 : 0,
           toLatitude ? parseFloat(toLatitude) : null,
           toLongitude ? parseFloat(toLongitude) : null,
           merchantLatitude ? parseFloat(merchantLatitude) : null,
@@ -176,22 +249,40 @@ const createShipment = async (req, res, next) => {
           platformShare,
           captainShare,
           appliedCouponCode,
-          discountApplied
+          discountApplied,
+          shiftId || null,
         ]
       );
 
       const shipmentId = result.insertId;
 
+      const creatorName = (req.user && (req.user.firstName || req.user.lastName))
+        ? `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim()
+        : 'العميل';
+
       await logStatusChange(conn, {
         shipmentId,
         userId: merchantId,
-        userName: 'التاجر',
+        userName: creatorName,
         userRole: 'merchant',
         previousStatus: null,
-        newStatus: statusVal,
+        newStatus: 'created',
         latitude: merchantLatitude ? parseFloat(merchantLatitude) : null,
         longitude: merchantLongitude ? parseFloat(merchantLongitude) : null
       });
+
+      if (isAutoEnabled) {
+        await logStatusChange(conn, {
+          shipmentId,
+          userId: null,
+          userName: 'التحويل الآلي (النظام)',
+          userRole: 'system',
+          previousStatus: 'created',
+          newStatus: 'Ready For Assignment',
+          latitude: merchantLatitude ? parseFloat(merchantLatitude) : null,
+          longitude: merchantLongitude ? parseFloat(merchantLongitude) : null
+        });
+      }
 
       // Update coupon_usages table with actual shipmentId
       if (appliedCouponCode) {
@@ -223,35 +314,44 @@ const createShipment = async (req, res, next) => {
         const [merchant] = await pool.query('SELECT storeName, firstName, lastName FROM users WHERE id = ?', [merchantId]);
         const m = merchant[0] || {};
         const senderName = m.storeName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || 'تاجر';
-        notifyAdmins(io, '📦 شحنة جديدة', `شحنة جديدة #${shipmentNumber} من ${senderName}`, 'shipment_new', {
+        notifyAdmins(io, '📦 شحنة جديدة قيد المراجعة', `شحنة جديدة #${shipmentNumber} من ${senderName} بانتظار مراجعة وتأكيد الإدارة`, 'shipment_new', {
           type: 'shipment_new', shipmentId: shipmentId.toString(), shipmentNumber
         });
       } catch (_) {}
 
-      // Emit real-time event with full shipment data
+      // Emit real-time event with full shipment data to admins
       try {
         const io = req.app.get('io');
         const eventData = await fetchShipmentEventData(shipmentId);
-        if (eventData && io) {
-          io.to('admins').emit('shipment_created', eventData);
+        const shipmentEventPayload = {
+          orderId: null,
+          shipmentId: shipmentId.toString(),
+          id: shipmentId.toString(),
+          orderNumber: shipmentNumber,
+          shipmentNumber,
+          shiftId: shiftId ? shiftId.toString() : null,
+          captainId: null,
+          orderType: 'shipment',
+          status: statusVal,
+          merchantId: merchantId ? merchantId.toString() : null,
+          fromAddress,
+          toAddress,
+          price: finalPrice,
+          totalAmount: finalPrice,
+          createdAt: new Date().toISOString(),
+          ...(eventData || {})
+        };
+        if (io) {
+          io.to('admins').emit('shipment_created', shipmentEventPayload);
+          io.to('admins').emit('ORDER_CREATED', shipmentEventPayload);
+          io.to('admins').emit('dashboard_update');
+          // Note: Shift captains are NOT notified while in 'Pending Review'
         }
       } catch (_) {}
 
-      // Trigger auto assignment immediately if enabled
-      if (isAutoEnabled) {
-        try {
-          const { triggerAutoAssignment } = require('../utils/autoAssignment');
-          triggerAutoAssignment(shipmentId, null).catch(err => 
-            console.error('Error triggering auto assignment on shipment creation:', err)
-          );
-        } catch (err) {
-          console.error('Error importing or calling triggerAutoAssignment:', err);
-        }
-      }
-
       res.status(201).json({
         status: 1,
-        message: 'تم إضافة الشحنة بنجاح',
+        message: 'تم إرسال الشحنة للإدارة بنجاح (قيد المراجعة)',
         data: {
           id: shipmentId.toString(),
           shipmentNumber,
@@ -302,7 +402,7 @@ const getShipments = async (req, res, next) => {
     let sql = `
       SELECT s.*, 
              m.firstName as merchantFirstName, m.lastName as merchantLastName, m.storeName as merchantStoreName,
-             m.profileImage as merchantProfileImage, m.phone as merchantPhone, COALESCE(s.merchantLatitude, m.latitude) as merchantLatitude, COALESCE(s.merchantLongitude, m.longitude) as merchantLongitude,
+             m.profileImage as merchantProfileImage, m.phone as merchantOriginalPhone, COALESCE(s.merchantPhone, m.phone) as merchantPhone, COALESCE(s.merchantLatitude, m.latitude) as merchantLatitude, COALESCE(s.merchantLongitude, m.longitude) as merchantLongitude,
              c.firstName as captainFirstName, c.lastName as captainLastName, c.profileImage as captainProfileImage, c.phone as captainPhone, c.latitude as captainLatitude, c.longitude as captainLongitude,
              a.firstName as assignedAdminFirstName, a.lastName as assignedAdminLastName,
              COALESCE(ROUND((SELECT AVG(rating) FROM reviews WHERE revieweeId = s.captainId), 1), 0.0) as captainAvgRating,
@@ -376,6 +476,7 @@ const getShipments = async (req, res, next) => {
         clientName: s.merchantStoreName || (s.merchantFirstName ? `${s.merchantFirstName} ${s.merchantLastName}` : null),
         clientAvatar: s.merchantProfileImage || null,
         clientPhone: s.merchantPhone || null,
+        merchantPhone: s.merchantPhone || null,
         merchantLatitude: s.merchantLatitude ? parseFloat(s.merchantLatitude) : null,
         merchantLongitude: s.merchantLongitude ? parseFloat(s.merchantLongitude) : null,
         driverName: s.captainFirstName ? `${s.captainFirstName} ${s.captainLastName}` : null,
@@ -387,8 +488,9 @@ const getShipments = async (req, res, next) => {
         driverReviewCount: parseInt(s.captainReviewCount || 0),
         captainApprovalStatus: s.captainApprovalStatus || null,
         estimatedTime: s.estimatedTime || '',
-        price: role === 'captain' ? (parseFloat(s.captainShare) > 0 ? parseFloat(s.captainShare) : parseFloat(s.price || 0) * 0.8) : parseFloat(s.price),
-        negotiatedPrice: role === 'captain' ? (parseFloat(s.captainShare) > 0 ? parseFloat(s.captainShare) : parseFloat(s.negotiatedPrice || s.price || 0) * 0.8) : (s.negotiatedPrice ? parseFloat(s.negotiatedPrice) : null),
+        goodsPrice: parseFloat(s.goodsPrice || 0),
+        price: parseFloat(s.price || 0),
+        negotiatedPrice: s.negotiatedPrice ? parseFloat(s.negotiatedPrice) : null,
         weight: s.weight ? parseFloat(s.weight) : null,
         notes: s.notes || '',
         isFragile: s.isFragile === 1,
@@ -423,7 +525,7 @@ const getShipmentById = async (req, res, next) => {
     const [shipments] = await pool.query(
       `SELECT s.*, 
               m.firstName as merchantFirstName, m.lastName as merchantLastName, m.storeName as merchantStoreName,
-              m.profileImage as merchantProfileImage, m.phone as merchantPhone, COALESCE(s.merchantLatitude, m.latitude) as merchantLatitude, COALESCE(s.merchantLongitude, m.longitude) as merchantLongitude,
+              m.profileImage as merchantProfileImage, m.phone as merchantOriginalPhone, COALESCE(s.merchantPhone, m.phone) as merchantPhone, COALESCE(s.merchantLatitude, m.latitude) as merchantLatitude, COALESCE(s.merchantLongitude, m.longitude) as merchantLongitude,
               m.email as merchantEmail, m.city as merchantCity, m.status as merchantStatus, m.createdAt as merchantCreatedAt,
               c.firstName as captainFirstName, c.lastName as captainLastName, c.profileImage as captainProfileImage, c.phone as captainPhone, c.latitude as captainLatitude, c.longitude as captainLongitude,
               a.firstName as assignedAdminFirstName, a.lastName as assignedAdminLastName,
@@ -483,6 +585,7 @@ const getShipmentById = async (req, res, next) => {
         clientName: s.merchantStoreName || (s.merchantFirstName ? `${s.merchantFirstName} ${s.merchantLastName}` : null),
         clientAvatar: s.merchantProfileImage || null,
         clientPhone: s.merchantPhone || null,
+        merchantPhone: s.merchantPhone || null,
         merchantEmail: s.merchantEmail || null,
         merchantCity: s.merchantCity || null,
         merchantStatus: s.merchantStatus || null,
@@ -500,8 +603,20 @@ const getShipmentById = async (req, res, next) => {
         driverReviewCount: parseInt(s.captainReviewCount || 0),
         captainApprovalStatus: s.captainApprovalStatus || null,
         estimatedTime: s.estimatedTime || '',
-        price: req.user.role === 'captain' ? (parseFloat(s.captainShare) > 0 ? parseFloat(s.captainShare) : parseFloat(s.price || 0) * 0.8) : parseFloat(s.price),
-        negotiatedPrice: req.user.role === 'captain' ? (parseFloat(s.captainShare) > 0 ? parseFloat(s.captainShare) : parseFloat(s.negotiatedPrice || s.price || 0) * 0.8) : (s.negotiatedPrice ? parseFloat(s.negotiatedPrice) : null),
+        goodsPrice: parseFloat(s.goodsPrice || 0),
+        price: parseFloat(s.price || 0),
+        serviceFee: parseFloat(s.serviceFee || 0),
+        tip: parseFloat(s.tip || 0),
+        discountApplied: parseFloat(s.discountApplied || 0),
+        couponCode: s.couponCode || null,
+        totalAmount: parseFloat((
+          (s.isWithoutAdvance === 1 ? 0.00 : parseFloat(s.goodsPrice || 0)) +
+          parseFloat(s.price || 0) +
+          parseFloat(s.serviceFee || 0) +
+          parseFloat(s.tip || 0) -
+          parseFloat(s.discountApplied || 0)
+        ).toFixed(2)),
+        negotiatedPrice: s.negotiatedPrice ? parseFloat(s.negotiatedPrice) : null,
         platformShare: parseFloat(s.platformShare) > 0 ? parseFloat(s.platformShare) : parseFloat(s.price || 0) * 0.2,
         captainShare: parseFloat(s.captainShare) > 0 ? parseFloat(s.captainShare) : parseFloat(s.price || 0) * 0.8,
         weight: s.weight ? parseFloat(s.weight) : null,
@@ -565,6 +680,8 @@ const updateShipmentStatus = async (req, res, next) => {
 
       const price = parseFloat(shipment.price || 0);
       const captainShare = parseFloat(shipment.captainShare || (price * 0.8));
+      const platformShare = parseFloat(shipment.platformShare || (price * 0.2));
+      const isOnlinePaid = (shipment.isPaid === 1 || shipment.paymentStatus === 'paid' || ['kashier', 'online', 'card', 'wallet'].includes((shipment.paymentMethod || '').toLowerCase()));
       const finalStatus = 'Completed';
 
       const conn = await pool.getConnection();
@@ -581,16 +698,38 @@ const updateShipmentStatus = async (req, res, next) => {
           [finalStatus, startLatitude ? parseFloat(startLatitude) : null, startLongitude ? parseFloat(startLongitude) : null, id]
         );
 
-        await conn.query(
-          'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
-          [captainShare, captainId]
-        );
+        if (isOnlinePaid) {
+          // 1. الدفع الإلكتروني: الكابتن لم يستلم كاش - المنصة تودع نصيب الكابتن 80% في محفظته
+          await conn.query(
+            'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
+            [captainShare, captainId]
+          );
 
-        const txTitle = `رسوم توصيل الشحنة #${shipment.shipmentNumber}`;
-        await conn.query(
-          "INSERT INTO wallet_transactions (userId, title, amount, type, status) VALUES (?, ?, ?, 'deposit', 'success')",
-          [captainId, txTitle, captainShare]
-        );
+          const txTitleCaptain = `أرباح توصيل شحنة إلكترونية #${shipment.shipmentNumber}`;
+          await conn.query(
+            "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'deposit', 'success', 'online', ?)",
+            [captainId, txTitleCaptain, captainShare, `#SHP${shipment.id}`]
+          );
+        } else {
+          // 1. الدفع عند الاستلام (كاش): الكابتن استلم 100% من سعر الشحنة والتوصيل نقداً + رسوم الخدمة + الإكرامية
+          // المنصة تستحق: عمولة 20% + رسوم الخدمة + الإكرامية
+          const serviceFee = parseFloat(shipment.serviceFee || 0);
+          const tip = parseFloat(shipment.tip || 0);
+          const totalPlatformDue = Math.round((platformShare + serviceFee + tip) * 100) / 100;
+
+          if (totalPlatformDue > 0) {
+            await conn.query(
+              'UPDATE users SET walletBalance = walletBalance - ? WHERE id = ?',
+              [totalPlatformDue, captainId]
+            );
+
+            const txTitleFee = `عمولة ورسوم المنصة (20% + خدمة + إكرامية) - شحنة كاش #${shipment.shipmentNumber}`;
+            await conn.query(
+              "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'withdraw', 'success', 'cash_commission', ?)",
+              [captainId, txTitleFee, totalPlatformDue, `#SHP${shipment.id}`]
+            );
+          }
+        }
 
         await conn.commit();
 
@@ -621,9 +760,13 @@ const updateShipmentStatus = async (req, res, next) => {
         const [captainRows] = await pool.query('SELECT fcmToken FROM users WHERE id = ?', [captainId]);
         const captainFcm = captainRows.length > 0 ? captainRows[0].fcmToken : null;
 
-        const msg = 'تم تسليم الشحنة بنجاح واكتمال الطلب 🎉';
-        sendNotification(io, shipment.merchantId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, msg, 'order', { type: 'shipment_completed', shipmentId: id.toString() });
-        sendNotification(io, captainId, 'تم تأكيد تسليم الشحنة 🎉', `تم إكمال الشحنة #${shipment.shipmentNumber}. تم إيداع ${captainShare} ج.م في محفظتك.`, 'order', { type: 'shipment_completed', shipmentId: id.toString(), amount: captainShare.toString() });
+        if (isOnlinePaid) {
+          sendNotification(io, captainId, 'تم تأكيد تسليم الشحنة 🎉', `تم إكمال الشحنة الإلكترونية #${shipment.shipmentNumber}. تم إيداع أرباح التوصيل (${captainShare} ج.م) في محفظتك.`, 'order', { type: 'shipment_completed', shipmentId: id.toString(), amount: captainShare.toString() });
+          sendNotification(io, shipment.merchantId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, 'تم تسليم الشحنة للمستلم بنجاح واكتمال العملية 🎉', 'order', { type: 'shipment_completed', shipmentId: id.toString() });
+        } else {
+          sendNotification(io, captainId, 'تم تأكيد تسليم الشحنة 🎉', `تم إكمال شحنة الدفع عند الاستلام #${shipment.shipmentNumber}. تم تسجيل عمولة المنصة 20% (${platformShare} ج.م) على محفظتك.`, 'order', { type: 'shipment_completed', shipmentId: id.toString(), amount: platformShare.toString() });
+          sendNotification(io, shipment.merchantId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, 'تم تسليم الشحنة للمستلم بنجاح واستلام قيمتها نقداً 🎉', 'order', { type: 'shipment_completed', shipmentId: id.toString() });
+        }
 
         const { notifyAdmins } = require('../utils/adminNotifier');
         await notifyAdmins(io, '✅ شحنة مكتملة',
@@ -672,9 +815,8 @@ const updateShipmentStatus = async (req, res, next) => {
       const isTimeout = status === 'timeout';
       await resolveAttempt(pool, { shipmentId: id, captainId: userId, status: isTimeout ? 'timeout' : 'rejected', reason: isTimeout ? 'انتهت مهلة قبول الشحنة للكابتن' : 'الكابتن قام برفض الشحنة' });
       status = 'Ready For Assignment';
-      sql = "UPDATE shipments SET status = 'Ready For Assignment', captainId = NULL, captainApprovalStatus = NULL WHERE id = ?";
+      sql = "UPDATE shipments SET status = 'Ready For Assignment', captainId = NULL, captainApprovalStatus = NULL";
       queryParams.length = 0;
-      queryParams.push(id);
       setImmediate(() => {
         triggerAutoAssignment(id, null).catch(err => console.error('Error triggering auto assignment after timeout/reject:', err));
       });
@@ -785,19 +927,19 @@ const updateShipmentStatus = async (req, res, next) => {
     try {
       const { notifyAdmins } = require('../utils/adminNotifier');
 
-      // 0. Captain Arrived
-      if (status === 'Captain Arrived' || status === 'captain arrived') {
-        const msg = `وصل الكابتن ${senderName} إلى موقع استلام الشحنة #${shipment.shipmentNumber}.`;
-        await notify(merchantFcm, merchantId, `وصل الكابتن للاستلام 📍`, msg, { type: 'captain_arrived' });
-        await notifyAdmins(io, '📍 وصول الكابتن للاستلام',
-          `الكابتن ${senderName} وصل لموقع استلام الشحنة #${shipment.shipmentNumber}`,
+      // 0. Captain in route to pickup / arrived
+      if (['captain arrived', 'في الطريق للاستلام', 'فى الطريق للاستلام'].includes(norm(status))) {
+        const msg = `الكابتن ${senderName} في الطريق لموقع استلام الشحنة #${shipment.shipmentNumber}.`;
+        await notify(merchantFcm, merchantId, `الكابتن في الطريق للاستلام 📍`, msg, { type: 'captain_arrived' });
+        await notifyAdmins(io, '📍 الكابتن في الطريق للاستلام',
+          `الكابتن ${senderName} في الطريق لموقع استلام الشحنة #${shipment.shipmentNumber}`,
           'captain_arrived', { type: 'captain_arrived', shipmentId: id.toString(), shipmentNumber: shipment.shipmentNumber },
           userId
         );
       }
 
       // 1. Captain proposes / makes offer
-      if (role === 'captain' && status === 'في انتظار القبول') {
+      if (role === 'captain' && ['في انتظار القبول', 'pending review'].includes(norm(status))) {
         const proposedPrice = negotiatedPrice ? parseFloat(negotiatedPrice) : shipment.price;
         await notify(merchantFcm, merchantId,
           'عرض توصيل جديد 🚚',
@@ -812,7 +954,7 @@ const updateShipmentStatus = async (req, res, next) => {
       }
 
       // 2. Merchant accepts offer
-      if (role === 'merchant' && status === 'تم قبول العرض') {
+      if (role === 'merchant' && ['تم قبول العرض', 'assigned to captain'].includes(norm(status))) {
         await notify(captainFcm, captainId,
           'تم قبول عرض التوصيل 🎉',
           `وافق التاجر ${senderName} على عرضك لتوصيل الشحنة #${shipment.shipmentNumber}`,
@@ -826,7 +968,7 @@ const updateShipmentStatus = async (req, res, next) => {
       }
 
       // 3. Merchant rejects offer
-      if (role === 'merchant' && status === 'جديدة' && oldStatus === 'في انتظار القبول') {
+      if (role === 'merchant' && norm(status) === 'جديدة' && norm(oldStatus) === 'في انتظار القبول') {
         await notify(captainFcm, captainId,
           'تم رفض عرض التوصيل ❌',
           `رفض التاجر ${senderName} عرضك لتوصيل الشحنة #${shipment.shipmentNumber}`,
@@ -834,22 +976,32 @@ const updateShipmentStatus = async (req, res, next) => {
         );
       }
 
-      // 4. Captain confirms pickup from merchant → status 'تم التنفيذ'
-      if (status === 'تم التنفيذ') {
-        const msg = 'تم استلام الشحنة وجاري التوجه إلى عنوان التسليم.';
-        await notify(merchantFcm, merchantId, `تحديث الشحنة #${shipment.shipmentNumber}`, msg, { type: 'shipment_picked_up' });
-        await notify(captainFcm, captainId, `تحديث الشحنة #${shipment.shipmentNumber}`, msg, { type: 'shipment_picked_up' });
-        await notifyAdmins(io, '📦 شحنة قيد التنفيذ',
-          `الشحنة #${shipment.shipmentNumber} قيد التنفيذ بواسطة ${senderName}`,
-          'shipment_in_progress', { type: 'shipment_in_progress', shipmentId: id.toString(), shipmentNumber: shipment.shipmentNumber },
+      // 4. Captain confirms pickup from merchant → status 'picked up' / 'تم استلام الشحنة'
+      if (['picked up', 'تم استلام الشحنة', 'تم التنفيذ'].includes(norm(status))) {
+        const msg = `تم استلام الشحنة #${shipment.shipmentNumber} بنجاح من قبل الكابتن ${senderName}.`;
+        await notify(merchantFcm, merchantId, `تم استلام الشحنة 📦`, msg, { type: 'shipment_picked_up' });
+        await notifyAdmins(io, '📦 تم استلام الشحنة',
+          `الشحنة #${shipment.shipmentNumber} تم استلامها بواسطة ${senderName}`,
+          'shipment_picked_up', { type: 'shipment_picked_up', shipmentId: id.toString(), shipmentNumber: shipment.shipmentNumber },
           userId
         );
       }
 
-      // 5. Captain confirms delivery → 'منتهية'
-      if (status === 'منتهية' || status === 'Delivered' || status === 'Completed') {
-        const msg = 'تم تسليم الشحنة بنجاح ✅';
-        await notify(merchantFcm, merchantId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, msg, { type: 'shipment_delivered' });
+      // 5. Captain in transit
+      if (['in transit', 'ongoing', 'فى الطريق للتسليم', 'في الطريق للتسليم'].includes(norm(status))) {
+        const msg = `الكابتن ${senderName} في الطريق لتسليم الشحنة #${shipment.shipmentNumber} إلى العنوان المحدد.`;
+        await notify(merchantFcm, merchantId, `الشحنة في الطريق للتسليم 🛵`, msg, { type: 'shipment_in_transit' });
+        await notifyAdmins(io, '🛵 شحنة في الطريق للتسليم',
+          `الشحنة #${shipment.shipmentNumber} في الطريق للتسليم بواسطة ${senderName}`,
+          'shipment_in_transit', { type: 'shipment_in_transit', shipmentId: id.toString(), shipmentNumber: shipment.shipmentNumber },
+          userId
+        );
+      }
+
+      // 6. Captain confirms delivery → 'منتهية' / 'delivered' / 'completed'
+      if (['منتهية', 'delivered', 'completed', 'تم التوصيل بنجاح', 'تم التسليم بنجاح', 'مكتمل'].includes(norm(status))) {
+        const msg = `تم تسليم الشحنة #${shipment.shipmentNumber} بنجاح واكتمالها 🎉`;
+        await notify(merchantFcm, merchantId, `تم تسليم الشحنة بنجاح ✅`, msg, { type: 'shipment_delivered' });
         await notify(captainFcm, captainId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, msg, { type: 'shipment_delivered' });
         await notifyAdmins(io, '✅ شحنة تم تسليمها',
           `الشحنة #${shipment.shipmentNumber} تم تسليمها بنجاح`,
@@ -956,6 +1108,17 @@ const updateShipmentStatus = async (req, res, next) => {
     if (status === 'Ready For Assignment') {
       const { triggerAutoAssignment } = require('../utils/autoAssignment');
       triggerAutoAssignment(id, null).catch(err => console.error('Error triggering auto assignment:', err.message));
+      // Notify shift captains if linked
+      try {
+        const [sRows] = await pool.query('SELECT shift_id, shipmentNumber, price FROM shipments WHERE id = ?', [id]);
+        if (sRows.length > 0 && sRows[0].shift_id && io) {
+          const shiftId = sRows[0].shift_id;
+          const payload = { id: id.toString(), type: 'shipment', shipmentNumber: sRows[0].shipmentNumber, status: 'Ready For Assignment' };
+          io.to(`shift_${shiftId}`).emit('ORDER_CREATED', payload);
+          io.to(`shift:${shiftId}`).emit('ORDER_CREATED', payload);
+        }
+      } catch (_) {}
+      if (io) io.to('admins').emit('dashboard_update');
     }
 
     res.status(200).json({
@@ -1034,7 +1197,8 @@ const confirmDelivery = async (req, res, next) => {
     const pool = getPool();
     const { id } = req.params;
     const { latitude, longitude } = req.body;
-    const merchantId = req.user.id;
+    const userId = req.user.id;
+    const role = req.user.role;
 
     const [shipments] = await pool.query('SELECT * FROM shipments WHERE id = ?', [id]);
     if (shipments.length === 0) {
@@ -1042,17 +1206,17 @@ const confirmDelivery = async (req, res, next) => {
     }
 
     const shipment = shipments[0];
-    if (shipment.merchantId !== merchantId && req.user.role !== 'admin') {
+    if (Number(shipment.merchantId) !== Number(userId) && Number(shipment.captainId) !== Number(userId) && !['admin', 'employee'].includes(role)) {
       return res.status(403).json({ status: 0, message: 'غير مصرح لك بتأكيد تسليم هذه الشحنة' });
     }
 
-    const allowedStatuses = ['Picked Up', 'In Transit', 'Delivered'];
-    if (!allowedStatuses.includes(shipment.status)) {
+    const allowedStatuses = ['picked up', 'in transit', 'delivered', 'completed', 'تم استلام الشحنة', 'في الطريق للتسليم', 'فى الطريق للتسليم', 'تم التوصيل بنجاح', 'تم التسليم بنجاح', 'مكتمل'];
+    if (!allowedStatuses.includes(norm(shipment.status))) {
       return res.status(400).json({ status: 0, message: 'لا يمكن تأكيد تسليم الشحنة في الحالة الحالية' });
     }
 
     const newStatus = 'Completed';
-    const captainId = shipment.captainId;
+    const captainId = shipment.captainId || (role === 'captain' ? userId : null);
 
     if (!captainId) {
       return res.status(400).json({ status: 0, message: 'لا يوجد كابتن معين لهذه الشحنة' });
@@ -1060,6 +1224,8 @@ const confirmDelivery = async (req, res, next) => {
 
     const price = parseFloat(shipment.price || 0);
     const captainShare = parseFloat(shipment.captainShare || (price * 0.8));
+    const platformShare = parseFloat(shipment.platformShare || (price * 0.2));
+    const isOnlinePaid = (shipment.isPaid === 1 || shipment.paymentStatus === 'paid' || ['kashier', 'online', 'card', 'wallet'].includes((shipment.paymentMethod || '').toLowerCase()));
 
     const conn = await pool.getConnection();
     try {
@@ -1075,16 +1241,38 @@ const confirmDelivery = async (req, res, next) => {
         [newStatus, latitude ? parseFloat(latitude) : null, longitude ? parseFloat(longitude) : null, id]
       );
 
-      await conn.query(
-        'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
-        [captainShare, captainId]
-      );
+      if (isOnlinePaid) {
+        // 1. الدفع الإلكتروني: الكابتن لم يستلم كاش - المنصة تودع نصيب الكابتن 80% في محفظته
+        await conn.query(
+          'UPDATE users SET walletBalance = walletBalance + ? WHERE id = ?',
+          [captainShare, captainId]
+        );
 
-      const txTitle = `رسوم توصيل الشحنة #${shipment.shipmentNumber}`;
-      await conn.query(
-        "INSERT INTO wallet_transactions (userId, title, amount, type, status) VALUES (?, ?, ?, 'deposit', 'success')",
-        [captainId, txTitle, captainShare]
-      );
+        const txTitleCaptain = `أرباح توصيل شحنة إلكترونية #${shipment.shipmentNumber}`;
+        await conn.query(
+          "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'deposit', 'success', 'online', ?)",
+          [captainId, txTitleCaptain, captainShare, `#SHP${shipment.id}`]
+        );
+      } else {
+        // 1. الدفع عند الاستلام (كاش): الكابتن استلم 100% من سعر الشحنة والتوصيل نقداً + رسوم الخدمة + الإكرامية
+        // المنصة تستحق: عمولة 20% + رسوم الخدمة + الإكرامية
+        const serviceFee = parseFloat(shipment.serviceFee || 0);
+        const tip = parseFloat(shipment.tip || 0);
+        const totalPlatformDue = Math.round((platformShare + serviceFee + tip) * 100) / 100;
+
+        if (totalPlatformDue > 0) {
+          await conn.query(
+            'UPDATE users SET walletBalance = walletBalance - ? WHERE id = ?',
+            [totalPlatformDue, captainId]
+          );
+
+          const txTitleFee = `عمولة ورسوم المنصة (20% + خدمة + إكرامية) - شحنة كاش #${shipment.shipmentNumber}`;
+          await conn.query(
+            "INSERT INTO wallet_transactions (userId, title, amount, type, status, paymentMethod, reference) VALUES (?, ?, ?, 'withdraw', 'success', 'cash_commission', ?)",
+            [captainId, txTitleFee, totalPlatformDue, `#SHP${shipment.id}`]
+          );
+        }
+      }
 
       await conn.commit();
 
@@ -1108,11 +1296,21 @@ const confirmDelivery = async (req, res, next) => {
 
       await pool.query('DELETE FROM messages WHERE shipmentId = ?', [id]);
 
-      sendNotification(io, captainId, 'تم تأكيد تسليم الشحنة 🎉', `أكد التاجر تسليم الشحنة #${shipment.shipmentNumber}. تم إيداع ${captainShare} ج.م في محفظتك.`, 'order', { type: 'shipment_completed', shipmentId: id.toString(), amount: captainShare.toString() });
+      if (isOnlinePaid) {
+        sendNotification(io, captainId, 'تم تأكيد تسليم الشحنة 🎉', `أكد التاجر تسليم الشحنة الإلكترونية #${shipment.shipmentNumber}. تم إيداع ${captainShare} ج.م في محفظتك.`, 'order', { type: 'shipment_completed', shipmentId: id.toString(), amount: captainShare.toString() });
+        if (shipment.merchantId) {
+          sendNotification(io, shipment.merchantId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, 'تم تسليم الشحنة للمستلم بنجاح واكتمال العملية 🎉', 'order', { type: 'shipment_completed', shipmentId: id.toString() });
+        }
+      } else {
+        sendNotification(io, captainId, 'تم تأكيد تسليم الشحنة 🎉', `تم تأكيد تسليم الشحنة الكاش #${shipment.shipmentNumber}. تم تسجيل عمولة المنصة 20% (${platformShare} ج.م) على محفظتك.`, 'order', { type: 'shipment_completed', shipmentId: id.toString(), amount: platformShare.toString() });
+        if (shipment.merchantId) {
+          sendNotification(io, shipment.merchantId, `تم تسليم الشحنة #${shipment.shipmentNumber}`, 'تم تسليم الشحنة للمستلم بنجاح واستلام قيمتها نقداً واكتمال العملية 🎉', 'order', { type: 'shipment_completed', shipmentId: id.toString() });
+        }
+      }
 
       res.status(200).json({
         status: 1,
-        message: 'تم تأكيد تسليم الشحنة بنجاح وإيداع مستحقات المندوب في محفظته'
+        message: 'تم تأكيد تسليم الشحنة بنجاح وتسوية المعاملة المالية في المحفظة'
       });
     } catch (err) {
       await conn.rollback();
@@ -1166,8 +1364,11 @@ const handleCaptainResponse = async (req, res, next) => {
 
       if (response === 'accept') {
         const [updateResult] = await conn.query(
-          "UPDATE shipments SET captainApprovalStatus = 'accepted' WHERE id = ? AND captainId = ? AND captainApprovalStatus = 'pending'",
-          [id, captainId]
+          `UPDATE shipments 
+           SET captainApprovalStatus = 'accepted',
+               shift_id = COALESCE(shift_id, (SELECT sc.shiftId FROM shift_captains sc JOIN shifts s ON sc.shiftId = s.id WHERE sc.captainId = ? AND s.status = 'active' AND sc.clockInTime IS NOT NULL AND sc.clockOutTime IS NULL LIMIT 1))
+           WHERE id = ? AND captainId = ? AND captainApprovalStatus = 'pending'`,
+          [captainId, id, captainId]
         );
         if (updateResult.affectedRows === 0) {
           await conn.rollback();
@@ -1413,12 +1614,20 @@ const updateShipment = async (req, res, next) => {
   try {
     const pool = getPool();
     const { id } = req.params;
-    const merchantId = req.user.id;
+    const isAdminOrEmp = req.user.role === 'admin' || req.user.role === 'employee';
+    const userId = req.user.id;
 
-    const [shipments] = await pool.query(
-      'SELECT * FROM shipments WHERE id = ? AND merchantId = ?',
-      [id, merchantId]
-    );
+    let shipments;
+    if (isAdminOrEmp) {
+      const [rows] = await pool.query('SELECT * FROM shipments WHERE id = ?', [id]);
+      shipments = rows;
+    } else {
+      const [rows] = await pool.query(
+        'SELECT * FROM shipments WHERE id = ? AND merchantId = ?',
+        [id, userId]
+      );
+      shipments = rows;
+    }
 
     if (shipments.length === 0) {
       return res.status(404).json({
@@ -1428,7 +1637,7 @@ const updateShipment = async (req, res, next) => {
     }
 
     const shipment = shipments[0];
-    if (shipment.status !== 'Pending Review') {
+    if (!isAdminOrEmp && shipment.status !== 'Pending Review') {
       return res.status(400).json({
         status: 0,
         message: 'لا يمكن تعديل الشحنة بعد قبولها أو البدء في تنفيذها'
@@ -1443,6 +1652,8 @@ const updateShipment = async (req, res, next) => {
       fromArea,
       toGovernorate,
       toArea,
+      goodsPrice,
+      itemPrice,
       price,
       weight,
       notes,
@@ -1451,7 +1662,9 @@ const updateShipment = async (req, res, next) => {
       toLatitude,
       toLongitude,
       merchantLatitude,
-      merchantLongitude
+      merchantLongitude,
+      merchantPhone,
+      merchantId
     } = req.body;
 
     if (!title || title.trim().length === 0 || !fromAddress || !toAddress || !price) {
@@ -1461,14 +1674,24 @@ const updateShipment = async (req, res, next) => {
       });
     }
 
+    const updatedMerchantId = (isAdminOrEmp && merchantId) ? parseInt(merchantId, 10) : shipment.merchantId;
+    const isNoAdvance = isWithoutAdvance === 'true' || isWithoutAdvance === true || isWithoutAdvance === 1;
+    const finalGoodsPrice = isNoAdvance ? 0.00 : (parseFloat(goodsPrice || itemPrice || 0) || 0.00);
+
+    const finalMerchantPhone = merchantPhone !== undefined
+      ? (merchantPhone ? merchantPhone.toString().trim() : null)
+      : (shipment.merchantPhone || null);
+
     await pool.query(
       `UPDATE shipments SET 
         title = ?, fromAddress = ?, toAddress = ?, 
         fromGovernorate = ?, fromArea = ?, toGovernorate = ?, toArea = ?, 
-        price = ?, weight = ?, notes = ?, 
+        price = ?, goodsPrice = ?, weight = ?, notes = ?, 
         isFragile = ?, isWithoutAdvance = ?, 
         toLatitude = ?, toLongitude = ?, 
-        merchantLatitude = ?, merchantLongitude = ?
+        merchantLatitude = ?, merchantLongitude = ?,
+        merchantPhone = ?,
+        merchantId = ?
       WHERE id = ?`,
       [
         title || null,
@@ -1479,14 +1702,17 @@ const updateShipment = async (req, res, next) => {
         toGovernorate || null,
         toArea || null,
         parseFloat(price),
+        finalGoodsPrice,
         weight ? parseFloat(weight) : null,
         notes || null,
         isFragile === 'true' || isFragile === true || isFragile === 1 ? 1 : 0,
-        isWithoutAdvance === 'true' || isWithoutAdvance === true || isWithoutAdvance === 1 ? 1 : 0,
+        isNoAdvance ? 1 : 0,
         toLatitude ? parseFloat(toLatitude) : null,
         toLongitude ? parseFloat(toLongitude) : null,
         merchantLatitude ? parseFloat(merchantLatitude) : null,
         merchantLongitude ? parseFloat(merchantLongitude) : null,
+        finalMerchantPhone,
+        updatedMerchantId,
         id
       ]
     );
