@@ -736,6 +736,26 @@ const withdraw = async (req, res, next) => {
     const accountHolderName = (name || req.body['?name'] || '')?.toString().trim();
     const userId = req.user.id;
 
+    const pool = getPool();
+
+    // Check user and enforce: ONLY clients and merchants can withdraw
+    const [users] = await pool.query(
+      'SELECT walletBalance, firstName, lastName, role FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ status: 0, message: 'المستخدم غير موجود' });
+    }
+
+    const userRole = (users[0].role || req.user.role || '').toLowerCase();
+    if (userRole !== 'client' && userRole !== 'merchant') {
+      return res.status(403).json({
+        status: 0,
+        message: 'خاصية السحب متاحة للعملاء والتجار فقط. تسويات الكباتن تتم من خلال الإدارة.'
+      });
+    }
+
     if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
       return res.status(400).json({ status: 0, message: 'المبلغ غير صالح' });
     }
@@ -743,8 +763,6 @@ const withdraw = async (req, res, next) => {
     if (!paymentMethod || (paymentMethod !== 'wallet' && paymentMethod !== 'bank' && paymentMethod !== 'instapay')) {
       return res.status(400).json({ status: 0, message: 'طريقة الدفع غير صالحة' });
     }
-
-    const pool = getPool();
 
     // Check if user already has a pending withdrawal request
     const [pendingRequests] = await pool.query(
@@ -757,16 +775,6 @@ const withdraw = async (req, res, next) => {
         status: 0,
         message: 'لديك طلب سحب معلق بالفعل. يرجى الانتظار حتى يتم معالجته.'
       });
-    }
-
-    // Get current balance and name
-    const [users] = await pool.query(
-      'SELECT walletBalance, firstName, lastName FROM users WHERE id = ?',
-      [userId]
-    );
-
-    if (users.length === 0) {
-      return res.status(404).json({ status: 0, message: 'المستخدم غير موجود' });
     }
 
     const currentBalance = parseFloat(users[0].walletBalance || 0);
@@ -802,16 +810,8 @@ const withdraw = async (req, res, next) => {
 
     const accountDetailsStr = JSON.stringify(accountDetailsObj);
 
-    const userRole = users[0].role || 'client';
     let totalDeduction = amountVal;
     let actualPlatformFee = 0;
-
-    // Only apply default driver 20% platform commission formula for captains
-    if (userRole === 'captain') {
-      const platformFee = Math.round((amountVal / 0.80 - amountVal) * 100) / 100;
-      totalDeduction = Math.min(currentBalance, Math.round((amountVal + platformFee) * 100) / 100);
-      actualPlatformFee = Math.round((totalDeduction - amountVal) * 100) / 100;
-    }
 
     // Deduct balance and insert transaction
     const conn = await pool.getConnection();
@@ -1675,7 +1675,7 @@ const createDepositSession = async (req, res, next) => {
 
     const pool = getPool();
     const [users] = await pool.query(
-      'SELECT email, firstName, lastName, phone FROM users WHERE id = ?',
+      'SELECT email, firstName, lastName, phone, role FROM users WHERE id = ?',
       [userId]
     );
     if (users.length === 0) {
@@ -1683,6 +1683,13 @@ const createDepositSession = async (req, res, next) => {
     }
 
     const user = users[0];
+    const userRole = (user.role || req.user.role || '').toLowerCase();
+    if (userRole !== 'client' && userRole !== 'merchant') {
+      return res.status(403).json({
+        status: 0,
+        message: 'خاصية الإيداع متاحة للعملاء والتجار فقط.'
+      });
+    }
     const orderId = `wallet_${userId}_${Date.now()}`;
     const amountStr = parseFloat(amount).toFixed(2);
 
@@ -2012,16 +2019,30 @@ const submitDirectDeposit = async (req, res, next) => {
     const userId = req.user.id;
     const { amount, paymentMethod, fromPhone, fromName } = req.body;
 
+    const [uRows] = await pool.query('SELECT firstName, lastName, role, phone FROM users WHERE id = ?', [userId]);
+    if (uRows.length === 0) return res.status(404).json({ status: 0, message: 'المستخدم غير موجود' });
+    const userRole = (uRows[0].role || req.user.role || '').toLowerCase();
+    if (userRole !== 'client' && userRole !== 'merchant') {
+      return res.status(403).json({
+        status: 0,
+        message: 'خاصية الإيداع متاحة للعملاء والتجار فقط.'
+      });
+    }
+
     const parsedAmount = parseFloat(amount);
     if (!parsedAmount || isNaN(parsedAmount) || parsedAmount < 1) {
       return res.status(400).json({ status: 0, message: 'المبلغ غير صالح. الحد الأدنى للإيداع 1 جنيه' });
     }
-    if (!paymentMethod || !fromPhone || !fromName) {
-      return res.status(400).json({ status: 0, message: 'جميع بيانات التحويل مطلوبة (طريقة الدفع، اسم ورقم المحوّل)' });
+    if (!paymentMethod || !fromPhone) {
+      return res.status(400).json({ status: 0, message: 'طريقة التحويل ورقم الهاتف المحول منه مطلوبان' });
     }
     if (!req.file) {
       return res.status(400).json({ status: 0, message: 'صورة إيصال التحويل مطلوبة' });
     }
+
+    const finalFromName = (fromName && fromName.trim())
+      ? fromName.trim()
+      : `${uRows[0].firstName || ''} ${uRows[0].lastName || ''}`.trim() || 'العميل';
 
     const paymentRef = `DEP-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
     const receiptImage = req.file.filename;
@@ -2030,7 +2051,7 @@ const submitDirectDeposit = async (req, res, next) => {
     await pool.query(
       `INSERT INTO direct_payments (paymentRef, merchantId, clientId, amount, paymentMethod, fromPhone, fromName, receiptImage, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [paymentRef, userId, userId, parsedAmount, paymentMethod, fromPhone.trim(), fromName.trim(), receiptImage]
+      [paymentRef, userId, userId, parsedAmount, paymentMethod, fromPhone.trim(), finalFromName, receiptImage]
     );
 
     // 2. Insert into wallet_transactions as pending deposit
@@ -2043,7 +2064,7 @@ const submitDirectDeposit = async (req, res, next) => {
         parsedAmount,
         paymentRef,
         paymentMethod,
-        JSON.stringify({ fromPhone: fromPhone.trim(), fromName: fromName.trim(), receiptImage })
+        JSON.stringify({ fromPhone: fromPhone.trim(), fromName: finalFromName, receiptImage })
       ]
     );
 
