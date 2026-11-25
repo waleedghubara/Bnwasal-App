@@ -336,7 +336,7 @@ const getWalletData = async (req, res, next) => {
       // 3. Calculate from completed UNSETTLED shipments (Captain)
       const [shipmentsData] = await pool.query(
         `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
-                COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime, deliveredAt, createdAt
+                COALESCE(deliveryConfirmedAt, updatedAt, createdAt) as finishTime, deliveryConfirmedAt, createdAt
          FROM shipments 
          WHERE captainId = ? AND (
            LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
@@ -469,7 +469,7 @@ const getWalletData = async (req, res, next) => {
       try {
         const [todayShipments] = await pool.query(
           `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
-                  COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime
+                  COALESCE(deliveryConfirmedAt, updatedAt, createdAt) as finishTime
            FROM shipments 
            WHERE captainId = ? AND (
              LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
@@ -995,7 +995,7 @@ const getTransactions = async (req, res, next) => {
       try {
         const [shipments] = await pool.query(
           `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
-                  COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime, deliveredAt, createdAt
+                  COALESCE(deliveryConfirmedAt, updatedAt, createdAt) as finishTime, deliveryConfirmedAt, createdAt
            FROM shipments
            WHERE captainId = ? AND (
              LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
@@ -1013,7 +1013,7 @@ const getTransactions = async (req, res, next) => {
             platShare = parseFloat(shp.platformShare);
             capShare = parseFloat(shp.captainShare);
           }
-          const d = shp.finishTime || shp.deliveredAt || shp.createdAt;
+          const d = shp.finishTime || shp.deliveryConfirmedAt || shp.createdAt;
 
           // Earnings entry
           allItems.push({
@@ -1197,13 +1197,13 @@ const getAccountStatement = async (req, res, next) => {
 
     const [shipments] = await pool.query(
       `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
-              COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime,
-              deliveredAt, createdAt
+              COALESCE(deliveryConfirmedAt, updatedAt, createdAt) as finishTime,
+              deliveryConfirmedAt, createdAt
        FROM shipments
        WHERE captainId = ? AND (
          LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
        ) AND (
-         COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) BETWEEN ? AND ?
+         COALESCE(deliveryConfirmedAt, updatedAt, createdAt) BETWEEN ? AND ?
        )
        ORDER BY finishTime DESC`,
       [userId, startDate, endDate]
@@ -1247,7 +1247,7 @@ const getAccountStatement = async (req, res, next) => {
       const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
       totalEarnings += capShare;
       platformCommission += platShare;
-      const d = shp.finishTime || shp.deliveredAt || shp.createdAt;
+      const d = shp.finishTime || shp.deliveryConfirmedAt || shp.createdAt;
       items.push({
         id: `shp_${shp.id}`,
         number: shp.shipmentNumber || `#SHP${shp.id}`,
@@ -1320,13 +1320,13 @@ const exportAccountStatement = async (req, res, next) => {
 
     const [shipments] = await pool.query(
       `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod,
-              COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime,
-              deliveredAt, createdAt
+              COALESCE(deliveryConfirmedAt, updatedAt, createdAt) as finishTime,
+              deliveryConfirmedAt, createdAt
        FROM shipments
        WHERE captainId = ? AND (
          LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
        ) AND (
-         COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) BETWEEN ? AND ?
+         COALESCE(deliveryConfirmedAt, updatedAt, createdAt) BETWEEN ? AND ?
        )
        ORDER BY finishTime DESC`,
       [userId, startDate, endDate]
@@ -1368,7 +1368,7 @@ const exportAccountStatement = async (req, res, next) => {
       const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
       totalEarnings += capShare;
       platformCommission += platShare;
-      const d = shp.deliveredAt || shp.createdAt;
+      const d = shp.deliveryConfirmedAt || shp.createdAt;
       items.push({
         number: shp.shipmentNumber || `#SHP${shp.id}`,
         type: 'شحنة توصيل',
