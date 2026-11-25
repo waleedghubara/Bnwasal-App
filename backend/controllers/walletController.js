@@ -1,7 +1,99 @@
+const XLSX = require('xlsx');
 const { getPool } = require('../config/db');
 const https = require('https');
 const { verifyKashierWebhook } = require('../utils/kashierWebhook');
 const { creditPendingDeposit } = require('../utils/walletDeposit');
+
+
+const ARABIC_MONTHS = [
+  'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+];
+
+const getCairoDateStr = (dateVal = new Date()) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date(dateVal));
+  } catch (_) {
+    return new Date(dateVal).toISOString().slice(0, 10);
+  }
+};
+
+const parsePeriodRange = (period = 'monthly', dateQuery = null) => {
+  const cairoToday = getCairoDateStr();
+  let dateStr = (dateQuery || cairoToday).toString().trim();
+  let [y, m, d] = dateStr.split('-');
+  let year = parseInt(y, 10);
+  let month = parseInt(m, 10); // 1 - 12
+  let day = parseInt(d, 10) || 1;
+
+  if (isNaN(year) || isNaN(month)) {
+    const [cy, cm, cd] = cairoToday.split('-');
+    year = parseInt(cy, 10);
+    month = parseInt(cm, 10);
+    day = parseInt(cd, 10);
+  }
+
+  const pad = (n) => String(n).padStart(2, '0');
+
+  let startDate, endDate, periodLabel;
+
+  if (period === 'all' || period === 'total') {
+    startDate = '2020-01-01 00:00:00';
+    endDate = '2099-12-31 23:59:59';
+    periodLabel = 'كشف الحساب الكلي (جميع الأوقات)';
+  } else if (period === 'daily') {
+    const curDateStr = `${year}-${pad(month)}-${pad(day)}`;
+    startDate = `${curDateStr} 00:00:00`;
+    endDate = `${curDateStr} 23:59:59`;
+    periodLabel = `${day} ${ARABIC_MONTHS[month - 1]} ${year}`;
+  } else if (period === 'weekly') {
+    const targetDt = new Date(year, month - 1, day);
+    const startDt = new Date(targetDt.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const sYear = startDt.getFullYear();
+    const sMonth = startDt.getMonth() + 1;
+    const sDay = startDt.getDate();
+    startDate = `${sYear}-${pad(sMonth)}-${pad(sDay)} 00:00:00`;
+    endDate = `${year}-${pad(month)}-${pad(day)} 23:59:59`;
+    periodLabel = `${sDay} ${ARABIC_MONTHS[sMonth - 1]} - ${day} ${ARABIC_MONTHS[month - 1]} ${year}`;
+  } else {
+    // monthly
+    const lastDay = new Date(year, month, 0).getDate();
+    startDate = `${year}-${pad(month)}-01 00:00:00`;
+    endDate = `${year}-${pad(month)}-${pad(lastDay)} 23:59:59`;
+    periodLabel = `${ARABIC_MONTHS[month - 1]} ${year}`;
+  }
+
+  return { startDate, endDate, periodLabel };
+};
+
+const formatArabicDateTime = (dateVal) => {
+  if (!dateVal) return '';
+  const d = new Date(dateVal);
+  const now = new Date();
+  
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'م' : 'ص';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  const timeStr = `${hours}:${minutes} ${ampm}`;
+
+  const day = d.getDate();
+  const monthName = ARABIC_MONTHS[d.getMonth()];
+  
+  const cairoToday = getCairoDateStr(now);
+  const cairoDate = getCairoDateStr(d);
+  
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const cairoYesterday = getCairoDateStr(yesterday);
+  
+  if (cairoDate === cairoToday) {
+    return `${timeStr} • اليوم`;
+  } else if (cairoDate === cairoYesterday) {
+    return `${timeStr} • أمس`;
+  }
+  return `${timeStr} • ${day} ${monthName}`;
+};
 
 async function notifyDepositSuccess(pool, userId, depositAmount, sessionId) {
   const io = global.io || null;
@@ -230,22 +322,25 @@ const getWalletData = async (req, res, next) => {
 
       // 2. Calculate from completed UNSETTLED orders (Captain)
       const [ordersData] = await pool.query(
-        `SELECT deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip
+        `SELECT deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+                COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime, deliveredAt, createdAt
          FROM orders 
          WHERE captainId = ? AND (
-           status IN ('Completed', 'منتهي', 'تم التنفيذ', 'Delivered', 'completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل') 
-           OR storeOrderStatus = 'COMPLETED' 
-           OR captainTripStatus = 'DELIVERED_SUCCESSFULLY'
+           LOWER(status) IN ('completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'مكتمل', 'منتهي', 'منتهية', 'تم التنفيذ', 'تم التوصيل بنجاح') 
+           OR LOWER(storeOrderStatus) IN ('completed', 'delivered') 
+           OR LOWER(captainTripStatus) IN ('delivered_successfully', 'completed')
          ) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
         [userId]
       );
 
       // 3. Calculate from completed UNSETTLED shipments (Captain)
       const [shipmentsData] = await pool.query(
-        `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip
+        `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+                COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime, deliveredAt, createdAt
          FROM shipments 
-         WHERE captainId = ? AND status IN ('منتهية', 'Completed', 'تم التنفيذ', 'delivered', 'Delivered', 'completed', 'تم التوصيل', 'تم التسليم', 'مكتمل')
-         AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
+         WHERE captainId = ? AND (
+           LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
+         ) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
         [userId]
       );
 
@@ -338,6 +433,97 @@ const getWalletData = async (req, res, next) => {
       availableBalance = Math.round((captainDues > 0 ? (captainDues + Math.min(0, currentBalance)) : (currentBalance - duePlatformFees)) * 100) / 100;
 
       const netBalance = Math.round((platformDues - captainDues) * 100) / 100;
+      // Today summary calculation: includes all orders and shipments completed today (both settled and unsettled)
+      const cairoToday = getCairoDateStr();
+      let todayEarnings = 0;
+      let todayCommission = 0;
+      let todayOrdersCount = 0;
+
+      try {
+        const [todayOrders] = await pool.query(
+          `SELECT deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+                  COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime
+           FROM orders 
+           WHERE captainId = ? AND (
+             LOWER(status) IN ('completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'مكتمل', 'منتهي', 'منتهية', 'تم التنفيذ', 'تم التوصيل بنجاح') 
+             OR LOWER(storeOrderStatus) IN ('completed', 'delivered') 
+             OR LOWER(captainTripStatus) IN ('delivered_successfully', 'completed')
+           )`,
+          [userId]
+        );
+
+        for (const ord of todayOrders) {
+          const dStr = getCairoDateStr(ord.finishTime);
+          if (dStr === cairoToday) {
+            const fee = parseFloat(ord.deliveryFee || 0);
+            const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+            todayEarnings += capShare;
+            todayCommission += platShare;
+            todayOrdersCount++;
+          }
+        }
+      } catch (eTodayOrd) {
+        console.error('Error in todayOrders query:', eTodayOrd);
+      }
+
+      try {
+        const [todayShipments] = await pool.query(
+          `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+                  COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime
+           FROM shipments 
+           WHERE captainId = ? AND (
+             LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
+           )`,
+          [userId]
+        );
+
+        for (const shp of todayShipments) {
+          const dStr = getCairoDateStr(shp.finishTime);
+          if (dStr === cairoToday) {
+            const price = parseFloat(shp.price || 0);
+            const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+            todayEarnings += capShare;
+            todayCommission += platShare;
+            todayOrdersCount++;
+          }
+        }
+      } catch (eTodayShp) {
+        console.error('Error in todayShipments query:', eTodayShp);
+      }
+
+      todayEarnings = Math.round(todayEarnings * 100) / 100;
+      todayCommission = Math.round(todayCommission * 100) / 100;
+      const todayNet = Math.round((todayEarnings - todayCommission) * 100) / 100;
+      const nowCairo = new Date();
+      const todayDateFormatted = `${nowCairo.getDate()} ${ARABIC_MONTHS[nowCairo.getMonth()]}`;
+
+      // Fetch last settlement for captain
+      let lastSettlement = null;
+      try {
+        const [lastSettlementRows] = await pool.query(
+          `SELECT id, settlementNumber, settledAmount, netBalance, settlementDate, createdAt, notes
+           FROM captain_settlements
+           WHERE captainId = ?
+           ORDER BY createdAt DESC
+           LIMIT 1`,
+          [userId]
+        );
+        if (lastSettlementRows.length > 0) {
+          const ls = lastSettlementRows[0];
+          const lsDate = new Date(ls.settlementDate || ls.createdAt);
+          lastSettlement = {
+            id: ls.id.toString(),
+            settlementNumber: ls.settlementNumber,
+            settledAmount: parseFloat(ls.settledAmount || 0),
+            date: `${lsDate.getDate()} ${ARABIC_MONTHS[lsDate.getMonth()]} ${lsDate.getFullYear()}`,
+            formattedAmount: `تم تحصيل ${parseFloat(ls.settledAmount || 0).toFixed(0)} ج.م`,
+            notes: ls.notes || '',
+          };
+        }
+      } catch (errLs) {
+        console.error('Error fetching last settlement:', errLs);
+      }
+
       res.locals = res.locals || {};
       res.locals.captainFinancials = {
         platformDues,
@@ -346,6 +532,18 @@ const getWalletData = async (req, res, next) => {
         grossDeliveryFees,
         cashCollected,
         onlineCollected,
+        todaySummary: {
+          earnings: todayEarnings,
+          commission: todayCommission,
+          net: todayNet,
+          date_formatted: todayDateFormatted,
+          count: todayOrdersCount,
+        },
+        duesSummary: {
+          platform_dues: platformDues,
+          remaining_dues: platformDues,
+          last_settlement: lastSettlement,
+        },
       };
     }
 
@@ -474,6 +672,18 @@ const getWalletData = async (req, res, next) => {
         cash_collected: res.locals?.captainFinancials?.cashCollected ?? 0,
         online_collected: res.locals?.captainFinancials?.onlineCollected ?? 0,
         is_online_paid_exists: (res.locals?.captainFinancials?.captainDues ?? 0) > 0,
+        today_summary: res.locals?.captainFinancials?.todaySummary ?? {
+          earnings: 0,
+          commission: 0,
+          net: 0,
+          date_formatted: `${new Date().getDate()} ${ARABIC_MONTHS[new Date().getMonth()]}`,
+          count: 0,
+        },
+        dues_summary: res.locals?.captainFinancials?.duesSummary ?? {
+          platform_dues: duePlatformFees,
+          remaining_dues: duePlatformFees,
+          last_settlement: null,
+        },
         pending_balance: pendingWithdrawal ? pendingWithdrawal.amount : 0,
         pendingWithdrawal,
         recent_transactions: transactions.map(tx => {
@@ -530,7 +740,7 @@ const withdraw = async (req, res, next) => {
       return res.status(400).json({ status: 0, message: 'المبلغ غير صالح' });
     }
 
-    if (!paymentMethod || (paymentMethod !== 'wallet' && paymentMethod !== 'bank')) {
+    if (!paymentMethod || (paymentMethod !== 'wallet' && paymentMethod !== 'bank' && paymentMethod !== 'instapay')) {
       return res.status(400).json({ status: 0, message: 'طريقة الدفع غير صالحة' });
     }
 
@@ -569,7 +779,14 @@ const withdraw = async (req, res, next) => {
     let accountDetailsObj = {};
     let title = '';
 
-    if (paymentMethod === 'wallet') {
+    if (paymentMethod === 'instapay') {
+      const instapayHandle = (req.body.instapayHandle || phone || '').toString().trim();
+      if (!instapayHandle || !accountHolderName) {
+        return res.status(400).json({ status: 0, message: 'جميع بيانات انستاباي مطلوبة (معرف انستاباي أو الهاتف واسم صاحب الحساب)' });
+      }
+      accountDetailsObj = { instapayHandle, name: accountHolderName, phone: instapayHandle };
+      title = `طلب سحب عبر انستاباي - ${instapayHandle}`;
+    } else if (paymentMethod === 'wallet') {
       if (!phone || !accountHolderName || !walletProvider) {
         return res.status(400).json({ status: 0, message: 'جميع بيانات المحفظة مطلوبة' });
       }
@@ -700,14 +917,224 @@ const withdraw = async (req, res, next) => {
 };
 
 // ─── GET /api/wallet/transactions ─────────────────────────────────────────────
+// ─── GET /api/wallet/transactions ─────────────────────────────────────────────
 const getTransactions = async (req, res, next) => {
   try {
     const pool = getPool();
     const userId = req.user.id;
+    const userRole = req.user.role || 'client';
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const offset = (page - 1) * limit;
+    const limit = parseInt(req.query.limit) || 30;
+    const filter = (req.query.filter || 'all').toLowerCase();
 
+    if (userRole === 'captain' || userRole === 'driver') {
+      // Build unified transaction feed for captain matching GEBLY Captain Wallet design
+      let allItems = [];
+
+      // 1. Fetch completed orders (Earnings & Commissions)
+      try {
+        const [orders] = await pool.query(
+          `SELECT id, orderNumber, deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+                  COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime, deliveredAt, createdAt
+           FROM orders
+           WHERE captainId = ? AND (
+             LOWER(status) IN ('completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'مكتمل', 'منتهي', 'منتهية', 'تم التنفيذ', 'تم التوصيل بنجاح')
+             OR LOWER(storeOrderStatus) IN ('completed', 'delivered')
+             OR LOWER(captainTripStatus) IN ('delivered_successfully', 'completed')
+           )
+           ORDER BY finishTime DESC
+           LIMIT 100`,
+          [userId]
+        );
+
+        for (const ord of orders) {
+          const fee = parseFloat(ord.deliveryFee || 0);
+          const rawPlat = ord.platformShare;
+          const rawCap = ord.captainShare;
+          let platShare = Math.round(fee * 0.20 * 100) / 100;
+          let capShare = Math.max(0, fee - platShare);
+          if (rawPlat != null && rawCap != null && parseFloat(rawCap) > 0) {
+            platShare = parseFloat(rawPlat);
+            capShare = parseFloat(rawCap);
+          }
+          const d = ord.finishTime || ord.deliveredAt || ord.createdAt;
+
+          // Earnings entry
+          allItems.push({
+            id: `ord_${ord.id}_earn`,
+            title: 'أرباح طلب مكتمل',
+            amount: capShare,
+            type: 'deposit',
+            category: 'earnings',
+            status: 'success',
+            date: formatArabicDateTime(d),
+            rawDate: new Date(d),
+            reference: ord.orderNumber || `#ORD${ord.id}`,
+            description: `طلب رقم ${ord.orderNumber || ord.id}`,
+          });
+
+          // Commission entry
+          allItems.push({
+            id: `ord_${ord.id}_comm`,
+            title: 'عمولة المنصة',
+            amount: platShare,
+            type: 'withdraw',
+            category: 'commission',
+            status: 'success',
+            date: formatArabicDateTime(d),
+            rawDate: new Date(d),
+            reference: ord.orderNumber || `#ORD${ord.id}`,
+            description: `عمولة طلب رقم ${ord.orderNumber || ord.id}`,
+          });
+        }
+      } catch (errOrd) {
+        console.error('Error fetching captain orders for transactions:', errOrd);
+      }
+
+      // 2. Fetch completed shipments (Earnings & Commissions)
+      try {
+        const [shipments] = await pool.query(
+          `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+                  COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime, deliveredAt, createdAt
+           FROM shipments
+           WHERE captainId = ? AND (
+             LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
+           )
+           ORDER BY finishTime DESC
+           LIMIT 100`,
+          [userId]
+        );
+
+        for (const shp of shipments) {
+          const price = parseFloat(shp.price || 0);
+          let platShare = Math.round(price * 0.20 * 100) / 100;
+          let capShare = Math.max(0, price - platShare);
+          if (shp.platformShare != null && shp.captainShare != null && parseFloat(shp.captainShare) > 0) {
+            platShare = parseFloat(shp.platformShare);
+            capShare = parseFloat(shp.captainShare);
+          }
+          const d = shp.finishTime || shp.deliveredAt || shp.createdAt;
+
+          // Earnings entry
+          allItems.push({
+            id: `shp_${shp.id}_earn`,
+            title: 'أرباح شحنة مكتملة',
+            amount: capShare,
+            type: 'deposit',
+            category: 'earnings',
+            status: 'success',
+            date: formatArabicDateTime(d),
+            rawDate: new Date(d),
+            reference: shp.shipmentNumber || `#SHP${shp.id}`,
+            description: `شحنة رقم ${shp.shipmentNumber || shp.id}`,
+          });
+
+          // Commission entry
+          allItems.push({
+            id: `shp_${shp.id}_comm`,
+            title: 'عمولة المنصة',
+            amount: platShare,
+            type: 'withdraw',
+            category: 'commission',
+            status: 'success',
+            date: formatArabicDateTime(d),
+            rawDate: new Date(d),
+            reference: shp.shipmentNumber || `#SHP${shp.id}`,
+            description: `عمولة شحنة رقم ${shp.shipmentNumber || shp.id}`,
+          });
+        }
+      } catch (errShp) {
+        console.error('Error fetching captain shipments for transactions:', errShp);
+      }
+
+      // 3. Fetch past settlements
+      try {
+        const [settlements] = await pool.query(
+          `SELECT id, settlementNumber, settledAmount, settlementScope, settlementDate, createdAt, notes
+           FROM captain_settlements
+           WHERE captainId = ?
+           ORDER BY createdAt DESC
+           LIMIT 50`,
+          [userId]
+        );
+
+        for (const s of settlements) {
+          const d = s.settlementDate || s.createdAt;
+          allItems.push({
+            id: `settle_${s.id}`,
+            title: 'تسوية مالية من الإدارة',
+            amount: parseFloat(s.settledAmount || 0),
+            type: 'settlement',
+            category: 'settlement',
+            status: 'success',
+            date: formatArabicDateTime(d),
+            rawDate: new Date(d),
+            reference: s.settlementNumber,
+            description: s.notes || `تسوية رقم ${s.settlementNumber}`,
+          });
+        }
+      } catch (errSet) {
+        console.error('Error fetching captain settlements for transactions:', errSet);
+      }
+
+      // 4. Fetch manual wallet transactions (e.g. deposit / withdraw)
+      try {
+        const [wt] = await pool.query(
+          `SELECT id, title, amount, type, status, reference, createdAt as date
+           FROM wallet_transactions
+           WHERE userId = ? AND title NOT LIKE '%طلب%' AND title NOT LIKE '%شحنة%' AND title NOT LIKE '%تسوية%'
+           ORDER BY createdAt DESC
+           LIMIT 30`,
+          [userId]
+        );
+
+        for (const t of wt) {
+          allItems.push({
+            id: `tx_${t.id}`,
+            title: t.title,
+            amount: parseFloat(t.amount || 0),
+            type: t.type,
+            category: t.type === 'deposit' ? 'deposits' : 'withdrawals',
+            status: t.status,
+            date: formatArabicDateTime(t.date),
+            rawDate: new Date(t.date),
+            reference: t.reference || `#TXN${t.id}`,
+            description: t.title,
+          });
+        }
+      } catch (errWt) {
+        console.error('Error fetching manual wallet transactions for captain:', errWt);
+      }
+
+      // Sort newest first
+      allItems.sort((a, b) => b.rawDate - a.rawDate);
+
+      // Apply filter
+      if (filter === 'earnings' || filter === 'orders') {
+        allItems = allItems.filter(i => i.category === 'earnings');
+      } else if (filter === 'commission' || filter === 'platform_fees' || filter === 'commissions') {
+        allItems = allItems.filter(i => i.category === 'commission');
+      } else if (filter === 'settlements' || filter === 'settlement') {
+        allItems = allItems.filter(i => i.category === 'settlement');
+      }
+
+      const total = allItems.length;
+      const offset = (page - 1) * limit;
+      const paginated = allItems.slice(offset, offset + limit);
+
+      return res.status(200).json({
+        status: 1,
+        data: {
+          transactions: paginated,
+          total,
+          page,
+          totalPages: Math.ceil(total / limit) || 1,
+        },
+      });
+    }
+
+    // Default flow for merchant & client
+    const offset = (page - 1) * limit;
     const [transactions] = await pool.query(
       `SELECT id, title, amount, type, status, createdAt as date
        FROM wallet_transactions
@@ -730,18 +1157,13 @@ const getTransactions = async (req, res, next) => {
           title: tx.title,
           amount: parseFloat(tx.amount),
           type: tx.type,
+          category: tx.type,
           status: tx.status,
-          date: new Date(tx.date).toLocaleString('ar-EG', {
-            hour: '2-digit',
-            minute: '2-digit',
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-          }),
+          date: formatArabicDateTime(tx.date),
         })),
         total,
         page,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / limit) || 1,
       },
     });
   } catch (error) {
@@ -749,7 +1171,499 @@ const getTransactions = async (req, res, next) => {
   }
 };
 
-// ─── POST /api/wallet/create-deposit-session ──────────────────────────────────
+// ─── GET /api/wallet/statement ────────────────────────────────────────────────
+const getAccountStatement = async (req, res, next) => {
+  try {
+    const pool = getPool();
+    const userId = req.user.id;
+    const period = (req.query.period || 'monthly').toLowerCase(); // 'daily', 'weekly', 'monthly'
+    const { startDate, endDate, periodLabel } = parsePeriodRange(period, req.query.date);
+
+    const [orders] = await pool.query(
+      `SELECT id, orderNumber, deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+              COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime,
+              deliveredAt, createdAt
+       FROM orders
+       WHERE captainId = ? AND (
+         LOWER(status) IN ('completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'مكتمل', 'منتهي', 'منتهية', 'تم التنفيذ', 'تم التوصيل بنجاح')
+         OR LOWER(storeOrderStatus) IN ('completed', 'delivered')
+         OR LOWER(captainTripStatus) IN ('delivered_successfully', 'completed')
+       ) AND (
+         COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) BETWEEN ? AND ?
+       )
+       ORDER BY finishTime DESC`,
+      [userId, startDate, endDate]
+    );
+
+    const [shipments] = await pool.query(
+      `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip,
+              COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime,
+              deliveredAt, createdAt
+       FROM shipments
+       WHERE captainId = ? AND (
+         LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
+       ) AND (
+         COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) BETWEEN ? AND ?
+       )
+       ORDER BY finishTime DESC`,
+      [userId, startDate, endDate]
+    );
+
+    let totalEarnings = 0;
+    let platformCommission = 0;
+    const items = [];
+
+    const resolveShares = (fee, rawPlat, rawCap) => {
+      const totalFee = parseFloat(fee || 0);
+      if (rawPlat != null && rawCap != null && parseFloat(rawCap) > 0) {
+        return { platShare: parseFloat(rawPlat), capShare: parseFloat(rawCap) };
+      }
+      const defaultPlat = Math.round(totalFee * 0.20 * 100) / 100;
+      return { platShare: defaultPlat, capShare: Math.max(0, totalFee - defaultPlat) };
+    };
+
+    for (const ord of orders) {
+      const fee = parseFloat(ord.deliveryFee || 0);
+      const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+      totalEarnings += capShare;
+      platformCommission += platShare;
+      const d = ord.finishTime || ord.deliveredAt || ord.createdAt;
+      items.push({
+        id: `ord_${ord.id}`,
+        number: ord.orderNumber || `#ORD${ord.id}`,
+        type: 'طلب',
+        paymentMethod: ord.paymentMethod || 'كاش',
+        deliveryFee: fee,
+        captainShare: capShare,
+        platformShare: platShare,
+        net: capShare,
+        date: formatArabicDateTime(d),
+        rawDate: d,
+      });
+    }
+
+    for (const shp of shipments) {
+      const price = parseFloat(shp.price || 0);
+      const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+      totalEarnings += capShare;
+      platformCommission += platShare;
+      const d = shp.finishTime || shp.deliveredAt || shp.createdAt;
+      items.push({
+        id: `shp_${shp.id}`,
+        number: shp.shipmentNumber || `#SHP${shp.id}`,
+        type: 'شحنة',
+        paymentMethod: shp.paymentMethod || 'كاش',
+        deliveryFee: price,
+        captainShare: capShare,
+        platformShare: platShare,
+        net: capShare,
+        date: formatArabicDateTime(d),
+        rawDate: d,
+      });
+    }
+
+    items.sort((a, b) => new Date(b.rawDate) - new Date(a.rawDate));
+
+    totalEarnings = Math.round(totalEarnings * 100) / 100;
+    platformCommission = Math.round(platformCommission * 100) / 100;
+    const netDues = Math.round((totalEarnings - platformCommission) * 100) / 100;
+
+    res.status(200).json({
+      status: 1,
+      data: {
+        period,
+        period_label: periodLabel,
+        start_date: startDate,
+        end_date: endDate,
+        total_earnings: totalEarnings,
+        platform_commission: platformCommission,
+        net_dues: netDues,
+        deliveries_count: items.length,
+        items,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET /api/wallet/statement/export ─────────────────────────────────────────
+const exportAccountStatement = async (req, res, next) => {
+  try {
+    const pool = getPool();
+    const userId = req.user.id;
+    const format = (req.query.format || 'excel').toLowerCase();
+    const period = (req.query.period || 'monthly').toLowerCase();
+    const { startDate, endDate, periodLabel } = parsePeriodRange(period, req.query.date);
+
+    const [captainRows] = await pool.query(
+      'SELECT firstName, lastName, phone FROM users WHERE id = ?',
+      [userId]
+    );
+    const captainName = captainRows.length > 0 ? `${captainRows[0].firstName} ${captainRows[0].lastName}` : 'الكابتن';
+
+    const [orders] = await pool.query(
+      `SELECT id, orderNumber, deliveryFee, platformShare, captainShare, paymentMethod,
+              COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime,
+              deliveredAt, createdAt
+       FROM orders
+       WHERE captainId = ? AND (
+         LOWER(status) IN ('completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'تم الاستلام', 'مكتمل', 'منتهي', 'منتهية', 'تم التنفيذ', 'تم التوصيل بنجاح')
+         OR LOWER(storeOrderStatus) IN ('completed', 'delivered')
+         OR LOWER(captainTripStatus) IN ('delivered_successfully', 'completed')
+       ) AND (
+         COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) BETWEEN ? AND ?
+       )
+       ORDER BY finishTime DESC`,
+      [userId, startDate, endDate]
+    );
+
+    const [shipments] = await pool.query(
+      `SELECT id, shipmentNumber, price, platformShare, captainShare, paymentMethod,
+              COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) as finishTime,
+              deliveredAt, createdAt
+       FROM shipments
+       WHERE captainId = ? AND (
+         LOWER(status) IN ('منتهية', 'completed', 'تم التنفيذ', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل', 'تم التوصيل بنجاح')
+       ) AND (
+         COALESCE(deliveredAt, deliveryConfirmedAt, completedAt, updatedAt, createdAt) BETWEEN ? AND ?
+       )
+       ORDER BY finishTime DESC`,
+      [userId, startDate, endDate]
+    );
+
+    let totalEarnings = 0;
+    let platformCommission = 0;
+    const items = [];
+
+    const resolveShares = (fee, rawPlat, rawCap) => {
+      const totalFee = parseFloat(fee || 0);
+      if (rawPlat != null && rawCap != null && parseFloat(rawCap) > 0) {
+        return { platShare: parseFloat(rawPlat), capShare: parseFloat(rawCap) };
+      }
+      const defaultPlat = Math.round(totalFee * 0.20 * 100) / 100;
+      return { platShare: defaultPlat, capShare: Math.max(0, totalFee - defaultPlat) };
+    };
+
+    for (const ord of orders) {
+      const fee = parseFloat(ord.deliveryFee || 0);
+      const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+      totalEarnings += capShare;
+      platformCommission += platShare;
+      const d = ord.deliveredAt || ord.createdAt;
+      items.push({
+        number: ord.orderNumber || `#ORD${ord.id}`,
+        type: 'طلب متجر',
+        paymentMethod: ord.paymentMethod || 'كاش',
+        deliveryFee: fee,
+        captainShare: capShare,
+        platformShare: platShare,
+        net: capShare,
+        date: formatArabicDateTime(d),
+      });
+    }
+
+    for (const shp of shipments) {
+      const price = parseFloat(shp.price || 0);
+      const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+      totalEarnings += capShare;
+      platformCommission += platShare;
+      const d = shp.deliveredAt || shp.createdAt;
+      items.push({
+        number: shp.shipmentNumber || `#SHP${shp.id}`,
+        type: 'شحنة توصيل',
+        paymentMethod: shp.paymentMethod || 'كاش',
+        deliveryFee: price,
+        captainShare: capShare,
+        platformShare: platShare,
+        net: capShare,
+        date: formatArabicDateTime(d),
+      });
+    }
+
+    totalEarnings = Math.round(totalEarnings * 100) / 100;
+    platformCommission = Math.round(platformCommission * 100) / 100;
+    const netDues = Math.round((totalEarnings - platformCommission) * 100) / 100;
+
+    if (format === 'excel' || format === 'xlsx') {
+      const wb = XLSX.utils.book_new();
+
+      const summaryData = [
+        ['كشف حساب كابتن - منصة GEBLY'],
+        ['اسم الكابتن:', captainName],
+        ['الفترة:', periodLabel],
+        ['تاريخ التصدير:', new Date().toLocaleString('ar-EG')],
+        [],
+        ['إجمالي الأرباح (ج.م)', 'عمولات المنصة (ج.م)', 'صافي المستحق (ج.م)', 'إجمالي الطلبات'],
+        [totalEarnings, platformCommission, netDues, items.length],
+        [],
+        ['م', 'رقم الطلب / الشحنة', 'النوع', 'طريقة الدفع', 'قيمة التوصيل (ج.م)', 'أرباح الكابتن (ج.م)', 'عمولة المنصة (ج.م)', 'الصافي (ج.م)', 'التاريخ والوقت'],
+      ];
+
+      items.forEach((item, index) => {
+        summaryData.push([
+          index + 1,
+          item.number,
+          item.type,
+          item.paymentMethod,
+          item.deliveryFee,
+          item.captainShare,
+          item.platformShare,
+          item.net,
+          item.date,
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(summaryData);
+      XLSX.utils.book_append_sheet(wb, ws, 'كشف الحساب');
+
+      const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="statement_${period}_${getCairoDateStr(targetDate)}.xlsx"`);
+      return res.send(buffer);
+    }
+
+    // PDF / HTML Format
+    const rowsHtml = items.map((it, idx) => `
+      <tr>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center;">${idx + 1}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; font-weight: bold;">${it.number}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0;">${it.type}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0;">${it.paymentMethod}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center;">${it.deliveryFee.toFixed(2)} ج.م</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center; color: #10B981; font-weight: bold;">${it.captainShare.toFixed(2)} ج.م</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center; color: #F97316;">${it.platformShare.toFixed(2)} ج.م</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; text-align: center; font-weight: bold;">${it.net.toFixed(2)} ج.م</td>
+        <td style="padding: 10px; border-bottom: 1px solid #E2E8F0; font-size: 12px; color: #64748B;">${it.date}</td>
+      </tr>
+    `).join('');
+
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html dir="rtl" lang="ar">
+    <head>
+      <meta charset="utf-8">
+      <title>كشف حساب كابتن - ${periodLabel}</title>
+      <style>
+        body { font-family: 'Cairo', Arial, sans-serif; background: #F8FAFC; margin: 0; padding: 24px; color: #0F172A; }
+        .card { background: white; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); padding: 24px; margin-bottom: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #FD5001; padding-bottom: 16px; margin-bottom: 20px; }
+        .logo { font-size: 26px; font-weight: bold; color: #FD5001; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+        .metric-box { background: #F1F5F9; border-radius: 12px; padding: 16px; text-align: center; }
+        .metric-val { font-size: 22px; font-weight: bold; margin-top: 6px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background: #0F1E36; color: white; padding: 12px; font-size: 13px; text-align: center; }
+        @media print {
+          body { background: white; padding: 0; }
+          .no-print { display: none; }
+          .card { box-shadow: none; border: 1px solid #E2E8F0; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="header">
+          <div>
+            <div class="logo">GEBLY</div>
+            <div style="color: #64748B; font-size: 13px;">رصيد شامل .. شفافية كاملة .. تحت إدارة GEBLY</div>
+          </div>
+          <div style="text-align: left;">
+            <h2 style="margin: 0; color: #0F1E36;">كشف حساب كابتن</h2>
+            <div style="color: #64748B; font-size: 14px;">الكابتن: <b>${captainName}</b></div>
+            <div style="color: #64748B; font-size: 13px;">الفترة: <b>${periodLabel}</b></div>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-box" style="border-top: 4px solid #10B981;">
+            <div style="color: #64748B; font-size: 14px;">إجمالي الأرباح</div>
+            <div class="metric-val" style="color: #10B981;">${totalEarnings.toFixed(2)} ج.م</div>
+          </div>
+          <div class="metric-box" style="border-top: 4px solid #F97316;">
+            <div style="color: #64748B; font-size: 14px;">عمولات المنصة</div>
+            <div class="metric-val" style="color: #F97316;">${platformCommission.toFixed(2)} ج.م</div>
+          </div>
+          <div class="metric-box" style="border-top: 4px solid #FD5001;">
+            <div style="color: #64748B; font-size: 14px;">صافي المستحق</div>
+            <div class="metric-val" style="color: #FD5001;">${netDues.toFixed(2)} ج.م</div>
+          </div>
+        </div>
+
+        <h3 style="color: #0F1E36; margin-bottom: 12px;">سجل الطلبات والشحنات المنفذة (${items.length} عملية)</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>م</th>
+              <th>رقم الطلب / الشحنة</th>
+              <th>النوع</th>
+              <th>الدفع</th>
+              <th>قيمة التوصيل</th>
+              <th>أرباح الكابتن</th>
+              <th>عمولة المنصة</th>
+              <th>الصافي</th>
+              <th>التاريخ والوقت</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || '<tr><td colspan="9" style="text-align:center; padding: 20px;">لا توجد طلبات منفذة في هذه الفترة</td></tr>'}
+          </tbody>
+        </table>
+
+        <div style="margin-top: 30px; text-align: center; color: #94A3B8; font-size: 12px; border-top: 1px solid #E2E8F0; padding-top: 14px;">
+          تم استخراج هذا التقرير آلياً عبر نظام GEBLY المالي • التاريخ: ${new Date().toLocaleString('ar-EG')}
+        </div>
+      </div>
+      <script>
+        window.onload = function() {
+          if (window.location.search.includes('print=true')) {
+            window.print();
+          }
+        };
+      </script>
+    </body>
+    </html>
+    `;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(htmlContent);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─── GET /api/wallet/dues ─────────────────────────────────────────────────────
+const getCaptainDues = async (req, res, next) => {
+  try {
+    const pool = getPool();
+    const userId = req.user.id;
+
+    // 1. Calculate platform dues from unsettled orders & shipments
+    const [orders] = await pool.query(
+      `SELECT deliveryFee, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip
+       FROM orders
+       WHERE captainId = ? AND (
+         status IN ('Completed', 'منتهي', 'تم التنفيذ', 'Delivered', 'completed', 'delivered', 'تم التوصيل', 'تم التسليم', 'مكتمل')
+         OR storeOrderStatus = 'COMPLETED'
+         OR captainTripStatus = 'DELIVERED_SUCCESSFULLY'
+       ) AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
+      [userId]
+    );
+
+    const [shipments] = await pool.query(
+      `SELECT price, platformShare, captainShare, paymentMethod, COALESCE(serviceFee, 0) as serviceFee, COALESCE(tip, 0) as tip
+       FROM shipments
+       WHERE captainId = ? AND status IN ('منتهية', 'Completed', 'تم التنفيذ', 'delivered', 'Delivered', 'completed', 'تم التوصيل', 'تم التسليم', 'مكتمل')
+       AND (isCaptainSettled = 0 OR isCaptainSettled IS NULL)`,
+      [userId]
+    );
+
+    let platformDues = 0;
+    let captainDues = 0;
+
+    const isOnline = (method) => {
+      if (!method) return false;
+      const m = String(method).trim().toLowerCase();
+      return ['online', 'kashier', 'card', 'wallet', 'محفظة', 'فيزا'].includes(m);
+    };
+
+    const resolveShares = (fee, rawPlat, rawCap) => {
+      const totalFee = parseFloat(fee || 0);
+      if (rawPlat != null && rawCap != null && parseFloat(rawCap) > 0) {
+        return { platShare: parseFloat(rawPlat), capShare: parseFloat(rawCap) };
+      }
+      const defaultPlat = Math.round(totalFee * 0.20 * 100) / 100;
+      return { platShare: defaultPlat, capShare: Math.max(0, totalFee - defaultPlat) };
+    };
+
+    for (const ord of orders) {
+      const fee = parseFloat(ord.deliveryFee || 0);
+      const serviceFee = parseFloat(ord.serviceFee || 0);
+      const tip = parseFloat(ord.tip || 0);
+      const { platShare, capShare } = resolveShares(fee, ord.platformShare, ord.captainShare);
+
+      if (isOnline(ord.paymentMethod)) {
+        captainDues += capShare;
+      } else {
+        platformDues += (platShare + serviceFee + tip);
+      }
+    }
+
+    for (const shp of shipments) {
+      const price = parseFloat(shp.price || 0);
+      const serviceFee = parseFloat(shp.serviceFee || 0);
+      const tip = parseFloat(shp.tip || 0);
+      const { platShare, capShare } = resolveShares(price, shp.platformShare, shp.captainShare);
+
+      if (isOnline(shp.paymentMethod)) {
+        captainDues += capShare;
+      } else {
+        platformDues += (platShare + serviceFee + tip);
+      }
+    }
+
+    platformDues = Math.round(platformDues * 100) / 100;
+    captainDues = Math.round(captainDues * 100) / 100;
+    const netDues = Math.max(0, Math.round((platformDues - captainDues) * 100) / 100);
+
+    // 2. Fetch last settlement
+    let lastSettlement = null;
+    let settlementsHistory = [];
+    try {
+      const [settlements] = await pool.query(
+        `SELECT id, settlementNumber, settledAmount, netBalance, settlementType, settlementDate, createdAt, notes
+         FROM captain_settlements
+         WHERE captainId = ?
+         ORDER BY createdAt DESC
+         LIMIT 20`,
+        [userId]
+      );
+
+      if (settlements.length > 0) {
+        const ls = settlements[0];
+        const lsDate = new Date(ls.settlementDate || ls.createdAt);
+        lastSettlement = {
+          id: ls.id.toString(),
+          settlementNumber: ls.settlementNumber,
+          settledAmount: parseFloat(ls.settledAmount || 0),
+          netBalance: parseFloat(ls.netBalance || 0),
+          date: `${lsDate.getDate()} ${ARABIC_MONTHS[lsDate.getMonth()]} ${lsDate.getFullYear()}`,
+          formattedAmount: `تم تحصيل ${parseFloat(ls.settledAmount || 0).toFixed(0)} ج.م`,
+          notes: ls.notes || '',
+        };
+
+        settlementsHistory = settlements.map(s => {
+          const sd = new Date(s.settlementDate || s.createdAt);
+          return {
+            id: s.id.toString(),
+            settlementNumber: s.settlementNumber,
+            settledAmount: parseFloat(s.settledAmount || 0),
+            date: `${sd.getDate()} ${ARABIC_MONTHS[sd.getMonth()]} ${sd.getFullYear()}`,
+            formattedAmount: `تم تحصيل ${parseFloat(s.settledAmount || 0).toFixed(0)} ج.م`,
+            notes: s.notes || '',
+          };
+        });
+      }
+    } catch (errSet) {
+      console.error('Error fetching settlements for dues:', errSet);
+    }
+
+    const remainingDues = netDues;
+
+    res.status(200).json({
+      status: 1,
+      data: {
+        platform_dues: netDues,
+        remaining_dues: remainingDues,
+        last_settlement: lastSettlement,
+        settlements_history: settlementsHistory,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const createDepositSession = async (req, res, next) => {
   try {
     const { amount } = req.body;
@@ -1091,12 +2005,94 @@ const checkDepositSession = async (req, res, next) => {
   }
 };
 
+// ─── POST /api/wallet/direct-deposit (إيداع مباشر عبر انستاباي أو المحافظ الإلكترونية) ──
+const submitDirectDeposit = async (req, res, next) => {
+  try {
+    const pool = getPool();
+    const userId = req.user.id;
+    const { amount, paymentMethod, fromPhone, fromName } = req.body;
+
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || isNaN(parsedAmount) || parsedAmount < 1) {
+      return res.status(400).json({ status: 0, message: 'المبلغ غير صالح. الحد الأدنى للإيداع 1 جنيه' });
+    }
+    if (!paymentMethod || !fromPhone || !fromName) {
+      return res.status(400).json({ status: 0, message: 'جميع بيانات التحويل مطلوبة (طريقة الدفع، اسم ورقم المحوّل)' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ status: 0, message: 'صورة إيصال التحويل مطلوبة' });
+    }
+
+    const paymentRef = `DEP-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+    const receiptImage = req.file.filename;
+
+    // 1. Insert into direct_payments
+    await pool.query(
+      `INSERT INTO direct_payments (paymentRef, merchantId, clientId, amount, paymentMethod, fromPhone, fromName, receiptImage, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [paymentRef, userId, userId, parsedAmount, paymentMethod, fromPhone.trim(), fromName.trim(), receiptImage]
+    );
+
+    // 2. Insert into wallet_transactions as pending deposit
+    await pool.query(
+      `INSERT INTO wallet_transactions (userId, title, amount, type, status, reference, category, paymentMethod, accountDetails)
+       VALUES (?, ?, ?, 'deposit', 'pending', ?, 'deposits', ?, ?)`,
+      [
+        userId,
+        `طلب إيداع عبر ${paymentMethod}`,
+        parsedAmount,
+        paymentRef,
+        paymentMethod,
+        JSON.stringify({ fromPhone: fromPhone.trim(), fromName: fromName.trim(), receiptImage })
+      ]
+    );
+
+    // 3. Notify admins
+    const io = global.io;
+    try {
+      const [uRows] = await pool.query('SELECT firstName, lastName, role, phone FROM users WHERE id = ?', [userId]);
+      const u = uRows[0] || {};
+      const userName = `${u.firstName || ''} ${u.lastName || ''}`.trim() || `مستخدم #${userId}`;
+      const roleText = u.role === 'captain' ? 'الكابتن' : (u.role === 'merchant' ? 'التاجر' : 'العميل');
+
+      const { notifyAdmins } = require('../utils/adminNotifier');
+      await notifyAdmins(
+        io,
+        '💳 طلب إيداع رصيد جديد',
+        `قام ${roleText} ${userName} بطلب إيداع ${parsedAmount} ج.م عبر ${paymentMethod}. الإيصال بانتظار المراجعة.`,
+        'wallet',
+        {
+          type: 'wallet_deposit_request',
+          userId: userId.toString(),
+          amount: parsedAmount.toString(),
+          paymentRef,
+          paymentMethod
+        }
+      );
+    } catch (err) {
+      console.error('Error notifying admins of direct deposit:', err);
+    }
+
+    res.status(201).json({
+      status: 1,
+      message: 'تم إرسال طلب الإيداع بنجاح! سيتم مراجعة الإيصال وشحن محفظتك فوراً.',
+      data: { paymentRef, amount: parsedAmount }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getWalletData,
   getTransactions,
+  getAccountStatement,
+  exportAccountStatement,
+  getCaptainDues,
   createDepositSession,
   kashierWebhook,
   paymentCallback,
   checkDepositSession,
   withdraw,
+  submitDirectDeposit,
 };

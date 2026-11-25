@@ -41,7 +41,7 @@ const setupDatabaseSchema = async (pool) => {
         email VARCHAR(100) UNIQUE NOT NULL,
         phone VARCHAR(20) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
-        role ENUM('merchant', 'captain', 'admin') NOT NULL,
+        role ENUM('client', 'merchant', 'captain', 'admin', 'employee') NOT NULL DEFAULT 'client',
         status ENUM('pending_otp', 'pending_verification', 'active', 'banned') DEFAULT 'pending_otp',
         otp_code VARCHAR(6) NULL,
         otp_expiry DATETIME NULL,
@@ -164,6 +164,7 @@ const setupDatabaseSchema = async (pool) => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         orderNumber VARCHAR(50) UNIQUE NOT NULL,
         merchantId INT NOT NULL,
+        clientId INT NULL,
         captainId INT NULL,
         details TEXT NOT NULL,
         storeDescription TEXT NOT NULL,
@@ -207,6 +208,44 @@ const setupDatabaseSchema = async (pool) => {
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (driverId) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB;`,
+
+      `CREATE TABLE IF NOT EXISTS shifts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        serviceArea VARCHAR(100) NOT NULL,
+        date DATE NOT NULL,
+        startTime VARCHAR(20) NOT NULL,
+        endTime VARCHAR(20) NOT NULL,
+        maxCaptains INT DEFAULT 10,
+        status ENUM('scheduled', 'active', 'completed', 'cancelled') DEFAULT 'scheduled',
+        notes TEXT NULL,
+        createdBy INT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_shift_date (date),
+        INDEX idx_shift_area (serviceArea),
+        INDEX idx_shift_status (status)
+      ) ENGINE=InnoDB;`,
+
+      `CREATE TABLE IF NOT EXISTS shift_captains (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        shiftId INT NOT NULL,
+        captainId INT NOT NULL,
+        status ENUM('joined', 'active', 'completed', 'cancelled') DEFAULT 'joined',
+        joinedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        clockInTime DATETIME NULL,
+        clockOutTime DATETIME NULL,
+        isOnBreak TINYINT(1) DEFAULT 0,
+        breakStartTime DATETIME NULL,
+        breakEndTime DATETIME NULL,
+        breakDurationMinutes INT DEFAULT 0,
+        totalBreakMinutesUsed INT DEFAULT 0,
+        ordersCount INT DEFAULT 0,
+        totalEarnings DECIMAL(10,2) DEFAULT 0.00,
+        UNIQUE KEY unique_shift_captain (shiftId, captainId),
+        FOREIGN KEY (shiftId) REFERENCES shifts(id) ON DELETE CASCADE,
+        FOREIGN KEY (captainId) REFERENCES users(id) ON DELETE CASCADE
       ) ENGINE=InnoDB;`,
 
       `CREATE TABLE IF NOT EXISTS referrals (
@@ -289,6 +328,8 @@ const setupDatabaseSchema = async (pool) => {
     await addColumnIfNotExists(pool, 'users', 'city', 'VARCHAR(50) NULL');
     await addColumnIfNotExists(pool, 'users', 'latitude', 'DOUBLE NULL');
     await addColumnIfNotExists(pool, 'users', 'longitude', 'DOUBLE NULL');
+    await addColumnIfNotExists(pool, 'users', 'isLocationConfirmed', 'TINYINT(1) DEFAULT 0');
+    await addColumnIfNotExists(pool, 'stores', 'isLocationConfirmed', 'TINYINT(1) DEFAULT 0');
     await addColumnIfNotExists(pool, 'users', 'fcmToken', 'VARCHAR(255) NULL');
 
     await addColumnIfNotExists(pool, 'shipments', 'negotiatedPrice', 'DECIMAL(10,2) NULL');
@@ -334,6 +375,16 @@ const setupDatabaseSchema = async (pool) => {
     await addColumnIfNotExists(pool, 'users', 'permissions', 'TEXT NULL');
     await addColumnIfNotExists(pool, 'users', 'webPushSubscription', 'TEXT NULL');
     await addColumnIfNotExists(pool, 'users', 'points', 'INT DEFAULT 0');
+    await addColumnIfNotExists(pool, 'users', 'preparationTime', "VARCHAR(50) DEFAULT '15-25 دقيقة'");
+    await addColumnIfNotExists(pool, 'users', 'rating', 'DECIMAL(3,1) DEFAULT 5.0');
+    await addColumnIfNotExists(pool, 'users', 'ratingCount', 'INT DEFAULT 1');
+
+    await addColumnIfNotExists(pool, 'merchant_products', 'preparationTime', "VARCHAR(50) DEFAULT '15-25 دقيقة'");
+    await addColumnIfNotExists(pool, 'merchant_products', 'rating', 'DECIMAL(3,1) DEFAULT 0.0');
+    await addColumnIfNotExists(pool, 'merchant_products', 'ratingCount', 'INT DEFAULT 0');
+
+    await addColumnIfNotExists(pool, 'reviews', 'productId', 'INT NULL');
+    await addForeignKeyIfNotExists(pool, 'reviews', 'productId', 'merchant_products', 'id', 'SET NULL');
 
     await addColumnIfNotExists(pool, 'refresh_tokens', 'deviceId', 'VARCHAR(255) NULL');
 
@@ -476,8 +527,13 @@ const setupDatabaseSchema = async (pool) => {
     // Coupon management tables and columns
     await addColumnIfNotExists(pool, 'shipments', 'couponCode', 'VARCHAR(50) NULL');
     await addColumnIfNotExists(pool, 'shipments', 'discountApplied', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'shipments', 'serviceFee', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'shipments', 'tip', 'DECIMAL(10,2) DEFAULT 0.00');
     await addColumnIfNotExists(pool, 'orders', 'couponCode', 'VARCHAR(50) NULL');
     await addColumnIfNotExists(pool, 'orders', 'discountApplied', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'orders', 'serviceFee', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'orders', 'tip', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'direct_payments', 'clientId', 'INT NULL');
 
     try {
       await pool.query(`CREATE TABLE IF NOT EXISTS coupons (
@@ -523,6 +579,355 @@ const setupDatabaseSchema = async (pool) => {
       ) ENGINE=InnoDB`);
     } catch (_) {}
 
+    // Merchant profile extensions
+    await addColumnIfNotExists(pool, 'users', 'storeDescription', 'TEXT NULL');
+    await addColumnIfNotExists(pool, 'users', 'storeAddress', 'VARCHAR(255) NULL');
+    await addColumnIfNotExists(pool, 'users', 'openingHours', 'VARCHAR(100) NULL');
+    await addColumnIfNotExists(pool, 'users', 'minOrderAmount', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'users', 'deliveryFee', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'users', 'isOpen', 'TINYINT(1) DEFAULT 1');
+
+    // Merchant Categories Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS merchant_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        merchantId INT NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        image VARCHAR(255) NULL,
+        icon VARCHAR(100) NULL,
+        sortOrder INT DEFAULT 0,
+        isActive TINYINT(1) DEFAULT 1,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (merchantId) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB`);
+    } catch (_) {}
+
+    // Merchant Products Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS merchant_products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        merchantId INT NOT NULL,
+        categoryId INT NULL,
+        name VARCHAR(150) NOT NULL,
+        description TEXT NULL,
+        price DECIMAL(10,2) NOT NULL,
+        discountPrice DECIMAL(10,2) NULL,
+        image VARCHAR(255) NULL,
+        images JSON NULL,
+        isAvailable TINYINT(1) DEFAULT 1,
+        sizes JSON NULL,
+        addons JSON NULL,
+        notes TEXT NULL,
+        sortOrder INT DEFAULT 0,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (merchantId) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (categoryId) REFERENCES merchant_categories(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB`);
+    } catch (_) {}
+
+    // Order Items Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS order_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        orderId INT NOT NULL,
+        productId INT NULL,
+        productName VARCHAR(150) NOT NULL,
+        productImage VARCHAR(255) NULL,
+        size VARCHAR(50) NULL,
+        addons JSON NULL,
+        quantity INT DEFAULT 1,
+        unitPrice DECIMAL(10,2) NOT NULL,
+        totalPrice DECIMAL(10,2) NOT NULL,
+        notes TEXT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (orderId) REFERENCES orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (productId) REFERENCES merchant_products(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB`);
+    } catch (_) {}
+
+    // User Favorite Products Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS user_favorite_products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        userId INT NOT NULL,
+        productId INT NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_user_product (userId, productId),
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (productId) REFERENCES merchant_products(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB`);
+    } catch (_) {}
+
+    // Delivery Zone Prices Table (From Excel matrix)
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS delivery_zone_prices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        fromZone VARCHAR(100) NOT NULL,
+        toZone VARCHAR(100) NOT NULL,
+        price DECIMAL(10,2) NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_zone_route (fromZone, toZone)
+      ) ENGINE=InnoDB`);
+
+      const { PRICING_MATRIX } = require('../utils/zoneDeliveryPricing');
+      const insertValues = [];
+      for (const [key, price] of Object.entries(PRICING_MATRIX)) {
+        const [fromZone, toZone] = key.split('|');
+        if (fromZone && toZone) {
+          insertValues.push([fromZone, toZone, price]);
+        }
+      }
+      if (insertValues.length > 0) {
+        await pool.query(
+          `INSERT IGNORE INTO delivery_zone_prices (fromZone, toZone, price) VALUES ?`,
+          [insertValues]
+        );
+      }
+    } catch (_) {}
+
+    // Stores Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS stores (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        merchantId INT NOT NULL,
+        name VARCHAR(150) NOT NULL,
+        activityType VARCHAR(100) DEFAULT 'restaurant',
+        description TEXT NULL,
+        logo VARCHAR(255) NULL,
+        coverImage VARCHAR(255) NULL,
+        phone VARCHAR(20) NULL,
+        address VARCHAR(255) NULL,
+        city VARCHAR(100) NULL,
+        zone VARCHAR(100) NULL,
+        latitude DOUBLE NULL,
+        longitude DOUBLE NULL,
+        deliveryZones JSON NULL,
+        minOrderAmount DECIMAL(10,2) DEFAULT 0.00,
+        commissionRate DECIMAL(5,2) DEFAULT 5.00,
+        commissionType ENUM('percentage', 'fixed') DEFAULT 'percentage',
+        settlementMethod VARCHAR(50) DEFAULT 'bank_transfer',
+        isOpen TINYINT(1) DEFAULT 1,
+        openingHours JSON NULL,
+        preparationTime VARCHAR(50) DEFAULT '15-25 دقيقة',
+        status ENUM('active', 'inactive') DEFAULT 'active',
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (merchantId) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_store_merchant (merchantId),
+        INDEX idx_store_status (status),
+        INDEX idx_store_zone (zone),
+        INDEX idx_store_activity (activityType)
+      ) ENGINE=InnoDB;`);
+    } catch (_) {}
+
+    // Merchant Settlements Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS merchant_settlements (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        settlementNumber VARCHAR(50) UNIQUE NOT NULL,
+        merchantId INT NOT NULL,
+        storeId INT NULL,
+        periodStart DATETIME NOT NULL,
+        periodEnd DATETIME NOT NULL,
+        grossSales DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        onlinePaid DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        codAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        platformCommission DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        refunds DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        adjustments DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        merchantNet DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        settledAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        settlementMethod VARCHAR(50) NOT NULL DEFAULT 'cash',
+        status ENUM('completed', 'pending', 'cancelled') DEFAULT 'completed',
+        notes TEXT NULL,
+        createdBy INT NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (merchantId) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (storeId) REFERENCES stores(id) ON DELETE SET NULL,
+        FOREIGN KEY (createdBy) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_settlement_merchant (merchantId),
+        INDEX idx_settlement_store (storeId),
+        INDEX idx_settlement_dates (periodStart, periodEnd)
+      ) ENGINE=InnoDB;`);
+    } catch (_) {}
+
+    // Captain Settlements Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS captain_settlements (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        settlementNumber VARCHAR(50) UNIQUE NOT NULL,
+        captainId INT NOT NULL,
+        periodStart DATETIME NOT NULL,
+        periodEnd DATETIME NOT NULL,
+        totalOrders INT DEFAULT 0,
+        totalShipments INT DEFAULT 0,
+        grossDeliveryFees DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        platformCommission DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        captainEarnings DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        cashCollected DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        onlineCollected DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        platformDues DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        captainDues DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        netBalance DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        settledAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        settlementType ENUM('collection_from_captain', 'payout_to_captain', 'zero_balance') DEFAULT 'collection_from_captain',
+        settlementScope ENUM('total', 'daily') DEFAULT 'total',
+        settlementDate DATE NULL,
+        paymentMethod VARCHAR(50) DEFAULT 'cash',
+        status ENUM('completed', 'pending', 'cancelled') DEFAULT 'completed',
+        notes TEXT NULL,
+        createdBy INT NOT NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (captainId) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (createdBy) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_settlement_captain (captainId),
+        INDEX idx_settlement_date (settlementDate)
+      ) ENGINE=InnoDB;`);
+    } catch (_) {}
+
+    try {
+      await pool.query('ALTER TABLE orders ADD COLUMN isCaptainSettled TINYINT(1) DEFAULT 0');
+    } catch (_) {}
+    try {
+      await pool.query('ALTER TABLE orders ADD COLUMN captainSettlementId INT NULL');
+    } catch (_) {}
+    try {
+      await pool.query('ALTER TABLE shipments ADD COLUMN isCaptainSettled TINYINT(1) DEFAULT 0');
+    } catch (_) {}
+    try {
+      await pool.query('ALTER TABLE shipments ADD COLUMN captainSettlementId INT NULL');
+    } catch (_) {}
+
+    // Audit Logs Table
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS audit_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        actorId INT NOT NULL,
+        actorRole VARCHAR(50) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        entityType VARCHAR(50) NOT NULL,
+        entityId INT NULL,
+        oldValue JSON NULL,
+        newValue JSON NULL,
+        ipAddress VARCHAR(45) NULL,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_audit_actor (actorId),
+        INDEX idx_audit_entity (entityType, entityId),
+        FOREIGN KEY (actorId) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB;`);
+    } catch (_) {}
+
+    // Main Activity Categories Table (الأقسام الرئيسية لأنشطة المتاجر)
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS main_activity_categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        keyName VARCHAR(100) UNIQUE NOT NULL,
+        name VARCHAR(150) NOT NULL,
+        tag VARCHAR(150) NULL,
+        icon VARCHAR(100) NULL,
+        image VARCHAR(255) NULL,
+        sortOrder INT DEFAULT 0,
+        isActive TINYINT(1) DEFAULT 1,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_main_cat_active (isActive),
+        INDEX idx_main_cat_key (keyName)
+      ) ENGINE=InnoDB;`);
+
+      const [existingCats] = await pool.query('SELECT COUNT(*) as cnt FROM main_activity_categories');
+      if (existingCats[0].cnt === 0) {
+        const defaultCats = [
+          ['all', 'الكل', 'الكل', 'apps_rounded', 1],
+          ['restaurant', 'مطاعم', 'مطاعم', 'restaurant_rounded', 2],
+          ['supermarket', 'ماركت / سوبر ماركت', 'ماركت', 'shopping_cart_rounded', 3],
+          ['bakery', 'مخبوزات', 'مخبوزات', 'bakery_dining_rounded', 4],
+          ['roastery', 'محمصة و عطارة', 'محمصة و عطارة', 'grain_rounded', 5],
+          ['sweets', 'حلويات', 'حلويات', 'cake_rounded', 6],
+          ['vegetables', 'فواكه وخضروات', 'فواكه وخضروات', 'eco_rounded', 7],
+          ['dairy', 'ألبان وجبن', 'ألبان وجبن', 'egg_rounded', 8],
+          ['juices', 'عصائر وكوكتيلات', 'عصائر وكوكتيلات', 'local_drink_rounded', 9],
+          ['coffee', 'قهوة وبُن', 'قهوة وبُن', 'local_cafe_rounded', 10],
+          ['online', 'أونلاين', 'أونلاين', 'shopping_bag_rounded', 11],
+          ['pharmacy', 'صيدلية', 'صيدلية', 'local_pharmacy_rounded', 12],
+          ['clothes', 'ملابس وأزياء', 'ملابس', 'checkroom_rounded', 13],
+          ['store', 'محل / متجر عام', 'محل ومتاجر', 'storefront_rounded', 14],
+        ];
+
+        for (const [keyName, name, tag, icon, order] of defaultCats) {
+          await pool.query(
+            'INSERT IGNORE INTO main_activity_categories (keyName, name, tag, icon, sortOrder) VALUES (?, ?, ?, ?, ?)',
+            [keyName, name, tag, icon, order]
+          );
+        }
+      }
+    } catch (_) {}
+
+    // Migrations for orders, products, categories
+    await addColumnIfNotExists(pool, 'orders', 'storeId', 'INT NULL');
+    await addColumnIfNotExists(pool, 'orders', 'paymentMethod', "VARCHAR(50) DEFAULT 'cash'");
+    await addColumnIfNotExists(pool, 'orders', 'paymentStatus', "ENUM('pending', 'paid', 'refunded') DEFAULT 'pending'");
+    await addColumnIfNotExists(pool, 'orders', 'platformCommission', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'orders', 'merchantNet', 'DECIMAL(10,2) DEFAULT 0.00');
+    await addColumnIfNotExists(pool, 'orders', 'isSettled', 'TINYINT(1) DEFAULT 0');
+    await addColumnIfNotExists(pool, 'orders', 'settlementId', 'INT NULL');
+    await addForeignKeyIfNotExists(pool, 'orders', 'storeId', 'stores', 'id', 'SET NULL');
+    await addForeignKeyIfNotExists(pool, 'orders', 'settlementId', 'merchant_settlements', 'id', 'SET NULL');
+
+    await addColumnIfNotExists(pool, 'merchant_products', 'storeId', 'INT NULL');
+    await addForeignKeyIfNotExists(pool, 'merchant_products', 'storeId', 'stores', 'id', 'SET NULL');
+
+    await addColumnIfNotExists(pool, 'merchant_categories', 'storeId', 'INT NULL');
+    await addForeignKeyIfNotExists(pool, 'merchant_categories', 'storeId', 'stores', 'id', 'SET NULL');
+
+    await addColumnIfNotExists(pool, 'coupons', 'storeId', 'INT NULL');
+    await addForeignKeyIfNotExists(pool, 'coupons', 'storeId', 'stores', 'id', 'SET NULL');
+
+    await addColumnIfNotExists(pool, 'stores', 'deletedAt', 'TIMESTAMP NULL');
+    await addColumnIfNotExists(pool, 'orders', 'commissionRateSnapshot', 'DECIMAL(5,2) NULL');
+    await addColumnIfNotExists(pool, 'orders', 'commissionTypeSnapshot', "ENUM('percentage', 'fixed') DEFAULT 'percentage'");
+    await addColumnIfNotExists(pool, 'orders', 'completedAt', 'DATETIME NULL');
+    await addColumnIfNotExists(pool, 'orders', 'adminNotes', 'TEXT NULL');
+    await addColumnIfNotExists(pool, 'merchant_settlements', 'settlementScope', "VARCHAR(30) DEFAULT 'total'");
+    await addColumnIfNotExists(pool, 'merchant_settlements', 'settlementDate', "DATE NULL");
+
+    try {
+      await pool.query('CREATE INDEX idx_orders_store_status ON orders (storeId, status, isSettled)');
+    } catch (_) {}
+
+    try {
+      await pool.query("ALTER TABLE stores MODIFY COLUMN activityType VARCHAR(100) DEFAULT 'restaurant'");
+    } catch (_) {}
+
+    // Cleanup orphaned store_banners, merchant_categories, and merchant_products from deleted stores
+    try {
+      await pool.query(`
+        DELETE FROM store_banners 
+        WHERE (storeId IS NOT NULL AND storeId IN (SELECT id FROM stores WHERE deletedAt IS NOT NULL))
+           OR (merchantId IS NOT NULL AND merchantId IN (SELECT id FROM users WHERE status IN ('banned', 'inactive') AND role = 'merchant') 
+               AND (storeId IS NULL OR storeId NOT IN (SELECT id FROM stores WHERE deletedAt IS NULL AND status = 'active')))
+      `);
+
+      await pool.query(`
+        DELETE FROM merchant_categories 
+        WHERE (storeId IS NOT NULL AND storeId IN (SELECT id FROM stores WHERE deletedAt IS NOT NULL))
+           OR (merchantId IS NOT NULL AND merchantId IN (SELECT id FROM users WHERE status IN ('banned', 'inactive') AND role = 'merchant') 
+               AND (storeId IS NULL OR storeId NOT IN (SELECT id FROM stores WHERE deletedAt IS NULL AND status = 'active')))
+      `);
+
+      await pool.query(`
+        DELETE FROM merchant_products 
+        WHERE (storeId IS NOT NULL AND storeId IN (SELECT id FROM stores WHERE deletedAt IS NOT NULL))
+           OR (merchantId IS NOT NULL AND merchantId IN (SELECT id FROM users WHERE status IN ('banned', 'inactive') AND role = 'merchant') 
+               AND (storeId IS NULL OR storeId NOT IN (SELECT id FROM stores WHERE deletedAt IS NULL AND status = 'active')))
+      `);
+    } catch (cleanupErr) {
+      console.warn('Orphaned stores cleanup notice:', cleanupErr.message);
+    }
+
     return { success: true };
   } catch (error) {
     console.error('Database Schema Setup Error:', error);
@@ -533,3 +938,4 @@ const setupDatabaseSchema = async (pool) => {
 module.exports = {
   setupDatabaseSchema
 };
+
