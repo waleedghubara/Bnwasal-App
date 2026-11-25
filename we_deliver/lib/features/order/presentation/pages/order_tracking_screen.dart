@@ -16,7 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:we_deliver/core/cache/cache_helper.dart';
 import 'package:we_deliver/core/api/end_point.dart';
 import 'package:we_deliver/core/di/injection_container.dart' as di;
-import 'package:we_deliver/core/services/appsflyer_service.dart';
+
 import '../../domain/entities/order.dart';
 import 'package:we_deliver/features/profile/presentation/bloc/review_cubit.dart';
 import '../../domain/usecases/get_order_by_id_usecase.dart';
@@ -82,8 +82,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   LatLng get _routeEnd {
     final status = _localOrder.status;
     // عندما يكون الكابتن متجهاً لمتجر الشراء أو يشتري الطلب
-    if (status == 'Assigned To Captain' ||
-        status == 'Captain Arrived') {
+    if (status == 'Assigned To Captain' || status == 'Captain Arrived') {
       return _origin; // متجه للمتجر
     }
     return _destination; // متجه للتسليم
@@ -167,7 +166,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     if (mounted) {
       setState(() {
         _isDelivery = prefs.getBool('isDelivery') ?? false;
-        _feeCollectionMode = prefs.getString('fee_collection_mode') ?? 'after_agreement';
+        _feeCollectionMode =
+            prefs.getString('fee_collection_mode') ?? 'after_agreement';
       });
       _loadDriverIcon();
       _initSocket();
@@ -179,7 +179,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       );
       if (response.statusCode == 200 && response.data != null) {
         final configData = response.data['data'] as Map<String, dynamic>;
-        final serverMode = configData['fee_collection_mode']?.toString() ?? 'after_agreement';
+        final serverMode =
+            configData['fee_collection_mode']?.toString() ?? 'after_agreement';
         if (mounted && serverMode != _feeCollectionMode) {
           setState(() {
             _feeCollectionMode = serverMode;
@@ -386,49 +387,64 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   }
 
   void _updateMilestoneSteps() {
-    final status = _localOrder.status;
-    if (status == 'Pending Review' ||
-        status == 'بانتظار القبول') {
-      _activeStepIndex = 1;
-      _stopGpsStreaming();
-    } else if (status == 'Ready For Assignment') {
-      _activeStepIndex = 2;
-      _stopGpsStreaming();
-    } else if (status == 'Assigned To Captain' ||
-        status == 'Captain Arrived') {
-      // Captain Arrived يُعرض في نفس الخطوة بدون ظهوره للمستخدم
-      _activeStepIndex = 4;
+    final status = _localOrder.status.trim().toLowerCase();
+    if (status == 'assigned to captain' ||
+        status == 'تم قبول الكابتن للمهمة' ||
+        status == 'تم قبول الطلب' ||
+        status == 'pending review' ||
+        status == 'بانتظار القبول' ||
+        status == 'new' ||
+        status == 'جديد' ||
+        status == 'جديدة' ||
+        status == 'pending' ||
+        status == 'ready for assignment' ||
+        status == 'في انتظار المندوب' ||
+        status == 'بانتظار المندوب' ||
+        status == 'captain arrived' ||
+        status == 'في الطريق للاستلام' ||
+        status == 'فى الطريق للاستلام' ||
+        status == 'جاري الاستلام') {
+      _activeStepIndex = 1; // 1. تم قبول الطلب (المطلوب: تم شراء الطلبات / الاستلام)
       if (_isDelivery) {
         _startGpsStreaming();
       } else {
         _stopGpsStreaming();
       }
-    } else if (status == 'Picked Up') {
-      _activeStepIndex = 5;
+    } else if (status == 'picked up' ||
+        status == 'تم استلام الطلب' ||
+        status == 'تم شراء الطلبات' ||
+        status == 'تم شراء الطلب' ||
+        status == 'تم الشراء' ||
+        status == 'in transit' ||
+        status == 'في الطريق للتسليم' ||
+        status == 'فى الطريق للتسليم' ||
+        status == 'جاري التوصيل' ||
+        status == 'قيد التوصيل') {
+      _activeStepIndex = 2; // 2. تم شراء الطلبات (المطلوب: تم التوصيل بنجاح)
       if (_isDelivery) {
         _startGpsStreaming();
       } else {
         _stopGpsStreaming();
       }
-    } else if (status == 'In Transit') {
-      _activeStepIndex = 6;
-      if (_isDelivery) {
-        _startGpsStreaming();
-      } else {
-        _stopGpsStreaming();
-      }
-    } else if (status == 'Delivered') {
-      _activeStepIndex = 7;
+    } else if (status == 'delivered' ||
+        status == 'تم التسليم بنجاح' ||
+        status == 'تم التوصيل بنجاح' ||
+        status == 'تم التوصيل') {
+      _activeStepIndex = 3; // 3. تم التوصيل بنجاح
       _stopGpsStreaming();
-    } else if (status == 'Completed') {
-      _activeStepIndex = 8;
+    } else if (status == 'completed' ||
+        status == 'مكتملة' ||
+        status == 'مكتمل' ||
+        status == 'منتهية' ||
+        status == 'finished') {
+      _activeStepIndex = 4; // 4. مكتمل
       _stopGpsStreaming();
-    } else if (status == 'Cancelled' ||
-        status == 'Rejected' ||
+    } else if (status == 'cancelled' ||
+        status == 'rejected' ||
         status == 'ملغي' ||
         status == 'ملغاة' ||
         status == 'مرفوض') {
-      _activeStepIndex = 9;
+      _activeStepIndex = 10;
       _stopGpsStreaming();
     }
   }
@@ -653,13 +669,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         options: Options(headers: {'Authorization': 'Bearer $token'}),
       );
       if (mounted) {
-        di.sl<AppsFlyerService>().logEvent('af_purchase', {
-          'order_id': _localOrder.id,
-          'price': _localOrder.deliveryFee,
-          'currency': 'EGP',
-          'items_count': 1,
-        });
-
         Navigator.pop(context); // pop loader
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -686,6 +695,232 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         );
       }
     }
+  }
+
+  void _showMandatoryPurchaseConfirmation() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.shopping_bag_outlined,
+                  color: Color(0xFF2E7D32),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'تأكيد شراء الطلبات *',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'يرجى التأكد من شراء واستلام جميع أصناف ومشتريات الطلب بدقة وبحالة سليمة.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: Colors.amber.shade800,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'هذه الخطوة إجبارية لبدء التوصيل إلى عنوان العميل.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.amber.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _updateStatusOnServer('Picked Up');
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
+              ),
+              child: const Text(
+                'تأكيد الشراء الآن',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMandatoryDeliveryConfirmation() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.check_circle_outline,
+                  color: AppColors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'تأكيد التوصيل بنجاح *',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'يرجى التأكد من تسليم المشتريات للعميل واستلام قيمة الطلب ورسوم التوصيل بالكامل.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.verified_outlined,
+                      color: Color(0xFF2E7D32),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'هذه الخطوة إجبارية لاكتمال الطلب واحتساب أرباحك.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.green.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _updateStatusOnServer('Delivered');
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
+              ),
+              child: const Text(
+                'تأكيد التوصيل الآن',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _updateStatusOnServer(String status) async {
@@ -731,7 +966,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         _localOrder.status == 'Ready For Assignment' ||
         _localOrder.status == 'بانتظار القبول';
 
-    final hasDriverPos = _driverPos.latitude != 0.0 && _driverPos.longitude != 0.0;
+    final hasDriverPos =
+        _driverPos.latitude != 0.0 && _driverPos.longitude != 0.0;
 
     if (isPreAssignment || !hasDriverPos) {
       return;
@@ -1329,179 +1565,160 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           canPop: false,
           child: StatefulBuilder(
             builder: (context, setDialogState) {
-            return Directionality(
-              textDirection: TextDirection.rtl,
-              child: Dialog(
-                backgroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        isRatingDriver ? 'تقييم المندوب' : 'تقييم التاجر',
-                        style: GoogleFonts.tajawal(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                      const SizedBox(height: 16),
-
-                      Text(
-                        'كيف كانت تجربتك في التعامل مع $name؟',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.tajawal(
-                          fontSize: 13,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(5, (index) {
-                          final starVal = index + 1;
-                          final isSelected = starVal <= currentRating;
-                          return GestureDetector(
-                            onTap: () {
-                              setDialogState(() {
-                                currentRating = starVal;
-                              });
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4.0,
-                              ),
-                              child: Icon(
-                                Icons.star_rounded,
-                                color: isSelected
-                                    ? const Color(0xFFFFB000)
-                                    : Colors.grey.shade300,
-                                size: 36,
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
-                      const SizedBox(height: 20),
-
-                      Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF9FAFC),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: TextField(
-                          controller: commentController,
-                          maxLines: 3,
-                          style: GoogleFonts.tajawal(fontSize: 13),
-                          decoration: InputDecoration(
-                            hintText: 'اكتب تعليقك هنا (اختياري)...',
-                            hintStyle: GoogleFonts.tajawal(
-                              color: Colors.grey.shade400,
-                              fontSize: 13,
-                            ),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.all(12),
+              return Directionality(
+                textDirection: TextDirection.rtl,
+                child: Dialog(
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          isRatingDriver ? 'تقييم المندوب' : 'تقييم التاجر',
+                          style: GoogleFonts.cairo(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 24),
+                        const SizedBox(height: 12),
+                        const Divider(height: 1, color: Color(0xFFEEEEEE)),
+                        const SizedBox(height: 16),
 
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            Navigator.pop(context); // close dialog
-                            final prefs =
-                                await SharedPreferences.getInstance();
-                            await prefs.setBool(
-                              'hasReviewed_order_${_localOrder.id}',
-                              true,
-                            );
+                        Text(
+                          'كيف كانت تجربتك في التعامل مع $name؟',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
 
-                            try {
-                              await _reviewCubit.submitReview(
-                                shipmentId: 'order_${_localOrder.id}',
-                                rating: currentRating,
-                                comment: commentController.text.isEmpty
-                                    ? null
-                                    : commentController.text,
-                                tags: null,
-                              );
-                            } catch (e) {
-                              debugPrint('Error submitting review: $e');
-                            }
-
-                            await _loadRatingAndReviewStatus();
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isRatingDriver
-                                        ? 'شكراً لتقييمك للمندوب! تم حفظ التقييم بنجاح.'
-                                        : 'شكراً لتقييمك! تم حفظ التقييم بنجاح.',
-                                    style: GoogleFonts.tajawal(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  backgroundColor: Colors.green.shade600,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(5, (index) {
+                            final starVal = index + 1;
+                            final isSelected = starVal <= currentRating;
+                            return GestureDetector(
+                              onTap: () {
+                                setDialogState(() {
+                                  currentRating = starVal;
+                                });
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4.0,
                                 ),
-                              );
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1F4C9B),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 0,
+                                child: Icon(
+                                  Icons.star_rounded,
+                                  color: isSelected
+                                      ? const Color(0xFFFFB000)
+                                      : Colors.grey.shade300,
+                                  size: 36,
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 20),
+
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF9FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.shade200),
                           ),
-                          child: Text(
-                            'تأكيد التقييم',
-                            style: GoogleFonts.tajawal(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                          child: TextField(
+                            controller: commentController,
+                            maxLines: 3,
+                            style: GoogleFonts.cairo(fontSize: 13),
+                            decoration: InputDecoration(
+                              hintText: 'اكتب تعليقك هنا (اختياري)...',
+                              hintStyle: GoogleFonts.cairo(
+                                color: Colors.grey.shade400,
+                                fontSize: 13,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.all(12),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 24),
+
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              Navigator.pop(context); // close dialog
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              await prefs.setBool(
+                                'hasReviewed_order_${_localOrder.id}',
+                                true,
+                              );
+
+                              try {
+                                await _reviewCubit.submitReview(
+                                  shipmentId: 'order_${_localOrder.id}',
+                                  rating: currentRating,
+                                  comment: commentController.text.isEmpty
+                                      ? null
+                                      : commentController.text,
+                                  tags: null,
+                                );
+                              } catch (e) {
+                                debugPrint('Error submitting review: $e');
+                              }
+
+                              await _loadRatingAndReviewStatus();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isRatingDriver
+                                          ? 'شكراً لتقييمك للمندوب! تم حفظ التقييم بنجاح.'
+                                          : 'شكراً لتقييمك! تم حفظ التقييم بنجاح.',
+                                      style: GoogleFonts.cairo(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.green.shade600,
+                                  ),
+                                );
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: Text(
+                              'تأكيد التقييم',
+                              style: GoogleFonts.cairo(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
-        ),
-      );
-    },
-  );
-}
-
-  Widget _buildBlueButton(String label, VoidCallback onPressed) {
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF1F4C9B),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      ),
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        style: GoogleFonts.tajawal(fontSize: 12, fontWeight: FontWeight.bold),
-        overflow: TextOverflow.ellipsis,
-      ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1562,7 +1779,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 14,
                     fontWeight: isCompleted || isActive
                         ? FontWeight.bold
@@ -1575,7 +1792,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
                     color: isCompleted || isActive
                         ? Colors.grey.shade600
@@ -1599,7 +1816,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               children: [
                 Text(
                   completionTime.split('\n')[0],
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 11,
                     color: Colors.grey.shade500,
                     fontWeight: FontWeight.bold,
@@ -1608,7 +1825,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                 const SizedBox(height: 2),
                 Text(
                   completionTime.split('\n')[1],
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 10,
                     color: Colors.grey.shade400,
                   ),
@@ -1623,9 +1840,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   }
 
   Widget _buildMerchantBottomSheet() {
-    final name = _isDelivery
-        ? (_localOrder.merchantName ?? 'التاجر')
-        : (_localOrder.captainName ?? 'المندوب المكلف');
     final displayId = _localOrder.orderNumber;
 
     return DraggableScrollableSheet(
@@ -1662,14 +1876,18 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                     _buildProfileHeader(),
                     const SizedBox(height: 12),
                     const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
+
+                    // Order Details & Delivery Location Card
+                    _buildOrderLocationsAndDetailsCard(),
+                    const SizedBox(height: 18),
 
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           "حالة الطلب",
-                          style: GoogleFonts.tajawal(
+                          style: GoogleFonts.cairo(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
                             color: Colors.black87,
@@ -1677,7 +1895,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                         ),
                         Text(
                           'رقم: $displayId',
-                          style: GoogleFonts.tajawal(
+                          style: GoogleFonts.cairo(
                             fontSize: 13,
                             color: Colors.grey.shade500,
                             fontWeight: FontWeight.w600,
@@ -1685,265 +1903,96 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 24),
-
-
-                    // ═══════════════════════════════════════════════════
-                    // الخطوة 1: قيد المراجعة
+                    const SizedBox(
+                      height: 24,
+                    ), // ═══════════════════════════════════════════════════
+                    // الخطوة 1: تم قبول الطلب
                     // ═══════════════════════════════════════════════════
                     _buildMilestoneItem(
                       stepNumber: 1,
-                      title: 'تم إرسال الطلب',
+                      title: 'تم قبول الطلب',
                       subtitle: _activeStepIndex > 1
-                          ? 'تم إرسال طلبك بنجاح وقبوله'
-                          : 'جاري مراجعة طلبك والبحث عن مندوب',
+                          ? 'تم قبول الطلب وبدء التنفيذ'
+                          : (_isDelivery
+                                ? 'لقد قبلت الطلب، اضغط تأكيد بعد شراء وتجهيز الطلبات'
+                                : 'وافق الكابتن على شراء وتوصيل طلبك'),
                       isCompleted: _activeStepIndex > 1,
                       isActive: _activeStepIndex == 1,
                       isLast: false,
-                    ),
-
-                    // ═══════════════════════════════════════════════════
-                    // الخطوة 2: بانتظار الدفع (أو بانتظار تعيين مندوب)
-                    // ═══════════════════════════════════════════════════
-                    _buildMilestoneItem(
-                      stepNumber: 2,
-                      title: 'بانتظار تعيين مندوب',
-                      subtitle: _activeStepIndex > 2
-                          ? 'تم تعيين المندوب بنجاح'
-                          : _activeStepIndex == 2
-                              ? 'جاري البحث عن مندوب مناسب لطلبك'
-                              : 'بانتظار الموافقة',
-                      isCompleted: _activeStepIndex > 2,
-                      isActive: _activeStepIndex == 2,
-                      isLast: false,
-                    ),
-
-                    // ═══════════════════════════════════════════════════
-                    // الخطوة 3: تم الدفع (أو بانتظار الدفع)
-                    // ═══════════════════════════════════════════════════
-                    _buildMilestoneItem(
-                      stepNumber: 3,
-                      title: _feeCollectionMode == 'after_agreement'
-                          ? 'تم الدفع'
-                          : 'بانتظار الدفع',
-                      subtitle: _feeCollectionMode == 'after_agreement'
-                          ? (_activeStepIndex > 3
-                              ? 'تم استلام الدفع وجاري البحث عن مندوب'
-                              : _activeStepIndex == 3
-                                  ? 'تم استلام الدفع، جاري البحث عن مندوب مناسب'
-                                  : 'بانتظار إتمام الدفع أولاً')
-                          : (_activeStepIndex > 3
-                              ? 'تم تأكيد الدفع بنجاح'
-                              : _activeStepIndex == 3
-                                  ? 'يرجى إتمام دفع رسوم التوصيل لتفعيل الشحنة'
-                                  : 'سيتم الدفع بعد تعيين المندوب'),
-                      isCompleted: _activeStepIndex > 3,
-                      isActive: _activeStepIndex == 3,
-                      isLast: false,
-                    ),
-
-                    // ═══════════════════════════════════════════════════
-                    // الخطوة 4: تم تعيين مندوب
-                    // ═══════════════════════════════════════════════════
-                    _buildMilestoneItem(
-                      stepNumber: 4,
-                      title: 'تم تعيين مندوب',
-                      subtitle: _activeStepIndex > 4
-                          ? 'تم تعيين المندوب وبدأ بشراء الطلب'
-                          : _activeStepIndex == 4
-                              ? 'تم تعيين المندوب، بانتظار تأكيد شراء الطلب'
-                              : 'بانتظار تعيين مندوب',
-                      isCompleted: _activeStepIndex > 4,
-                      isActive: _activeStepIndex == 4,
-                      isLast: false,
-                      actionWidget: _activeStepIndex == 4
-                          ? (_isDelivery
-                                // زر الكابتن: تأكيد شراء الطلب
-                                ? ElevatedButton(
-                                    onPressed: () =>
-                                        _updateStatusOnServer('Picked Up'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFF0F4FA),
-                                      foregroundColor: const Color(0xFF1F4C9B),
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 24,
-                                        vertical: 8,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      'تأكيد شراء الطلب',
-                                      style: GoogleFonts.tajawal(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  )
-                                // التاجر: انتظار
-                                : Text(
-                                    'تم تعيين المندوب، جاري شراء الطلب',
-                                    style: GoogleFonts.tajawal(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ))
+                      actionWidget: _activeStepIndex == 1 && _isDelivery
+                          ? ElevatedButton.icon(
+                              onPressed: _showMandatoryPurchaseConfirmation,
+                              icon: const Icon(
+                                Icons.shopping_bag_outlined,
+                                size: 16,
+                              ),
+                              label: Text(
+                                'تم شراء الطلبات * إجباري',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF2E7D32),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 8,
+                                ),
+                              ),
+                            )
                           : null,
                     ),
 
                     // ═══════════════════════════════════════════════════
-                    // الخطوة 5: تم شراء الطلب
+                    // الخطوة 2: تم شراء الطلبات * اجبارى
                     // ═══════════════════════════════════════════════════
                     _buildMilestoneItem(
-                      stepNumber: 5,
-                      title: 'تم شراء الطلب',
-                      subtitle: _activeStepIndex > 5
-                          ? 'قام المندوب بشراء طلبك وبدأ التوصيل'
-                          : _activeStepIndex == 5
-                              ? 'تم شراء الطلب، بانتظار بدء التوصيل'
-                              : 'سيقوم المندوب بشراء الطلب',
-                      isCompleted: _activeStepIndex > 5,
-                      isActive: _activeStepIndex == 5,
+                      stepNumber: 2,
+                      title: 'تم شراء الطلبات * إجباري',
+                      subtitle: _activeStepIndex > 2
+                          ? 'تم شراء وتجهيز الطلب وهو في الطريق للتسليم'
+                          : (_isDelivery
+                                ? 'تم تجهيز الطلب، توجه لعنوان العميل واضغط تأكيد التوصيل عند التسليم'
+                                : 'تم شراء طلبك والكابتن في طريقه للتسليم'),
+                      isCompleted: _activeStepIndex > 2,
+                      isActive: _activeStepIndex == 2,
                       isLast: false,
-                      actionWidget: _activeStepIndex == 5
-                          ? (_isDelivery
-                                // زر الكابتن: بدء التوصيل
-                                ? ElevatedButton(
-                                    onPressed: () =>
-                                        _updateStatusOnServer('In Transit'),
+                      actionWidget: _activeStepIndex == 2 && _isDelivery
+                          ? Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed:
+                                        _showMandatoryDeliveryConfirmation,
+                                    icon: const Icon(
+                                      Icons.check_circle_outline,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      'تم التوصيل بنجاح * إجباري',
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF1F4C9B),
+                                      backgroundColor: const Color(0xFF2E7D32),
                                       foregroundColor: Colors.white,
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(10),
                                       ),
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 24,
+                                        horizontal: 8,
                                         vertical: 8,
                                       ),
                                     ),
-                                    child: Text(
-                                      'بدء التوصيل',
-                                      style: GoogleFonts.tajawal(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  )
-                                // التاجر: انتظار
-                                : Text(
-                                    'قام المندوب بشراء طلبك، سيبدأ التوصيل قريباً',
-                                    style: GoogleFonts.tajawal(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ))
-                          : null,
-                    ),
-
-                    // ═══════════════════════════════════════════════════
-                    // الخطوة 6: جارٍ التوصيل إليك
-                    // ═══════════════════════════════════════════════════
-                    _buildMilestoneItem(
-                      stepNumber: 6,
-                      title: 'جارٍ التوصيل إليك',
-                      subtitle: _activeStepIndex > 6
-                          ? 'تم التوصيل بنجاح'
-                          : _activeStepIndex == 6
-                              ? (_isDelivery
-                                    ? 'أنت في الطريق لتوصيل الطلب'
-                                    : 'المندوب في طريقه لتوصيل الطلب')
-                              : 'سيبدأ التوصيل بعد الشراء',
-                      isCompleted: _activeStepIndex > 6,
-                      isActive: _activeStepIndex == 6,
-                      isLast: false,
-                      actionWidget: _activeStepIndex == 6
-                          ? (_isDelivery
-                                // أزرار الكابتن: تم التوصيل + مرتجع
-                                ? Row(
-                                    children: [
-                                      Expanded(
-                                        child: _buildBlueButton(
-                                          'تم التوصيل',
-                                          () => _updateStatusOnServer('Delivered'),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: ElevatedButton(
-                                          onPressed: () =>
-                                              _updateStatusOnServer('Cancelled'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: const Color(
-                                              0xFFFFF0F1,
-                                            ),
-                                            foregroundColor: const Color(
-                                              0xFFE53935,
-                                            ),
-                                            elevation: 0,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 8,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            'مرتجع / فشل',
-                                            textAlign: TextAlign.center,
-                                            style: GoogleFonts.tajawal(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  )
-                                // التاجر: انتظار
-                                : Text(
-                                    'المندوب في طريقه لتوصيل الطلب إليك',
-                                    style: GoogleFonts.tajawal(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ))
-                          : null,
-                    ),
-
-                    // ═══════════════════════════════════════════════════
-                    // الخطوة 7: تم التوصيل
-                    // ═══════════════════════════════════════════════════
-                    _buildMilestoneItem(
-                      stepNumber: 7,
-                      title: 'تم التوصيل',
-                      subtitle: _activeStepIndex > 7
-                          ? 'تم تأكيد الاستلام وإتمام الطلب'
-                          : _activeStepIndex == 7
-                              ? (_isDelivery
-                                    ? 'بانتظار تأكيد التاجر لاستلام الطلب'
-                                    : 'وصل المندوب بطلبك، يرجى تأكيد الاستلام')
-                              : 'سيصل المندوب لتسليم الطلب',
-                      isCompleted: _activeStepIndex > 7,
-                      isActive: _activeStepIndex == 7,
-                      isLast: false,
-                      actionWidget: _activeStepIndex == 7 && !_isDelivery
-                          // أزرار التاجر: تأكيد + رفض
-                          ? Row(
-                              children: [
-                                Expanded(
-                                  child: _buildBlueButton(
-                                    'تأكيد الاستلام',
-                                    _confirmDelivery,
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -1964,9 +2013,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                                       ),
                                     ),
                                     child: Text(
-                                      'رفض / مرتجع',
+                                      'مرتجع / فشل',
                                       textAlign: TextAlign.center,
-                                      style: GoogleFonts.tajawal(
+                                      style: GoogleFonts.cairo(
                                         fontSize: 12,
                                         fontWeight: FontWeight.bold,
                                       ),
@@ -1980,80 +2029,181 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                     ),
 
                     // ═══════════════════════════════════════════════════
-                    // الخطوة 8: التقييم / مكتملة
+                    // الخطوة 3: تم التوصيل بنجاح * اجبارى
                     // ═══════════════════════════════════════════════════
                     _buildMilestoneItem(
-                      stepNumber: 8,
-                      title: _isDelivery ? 'تقييم التاجر' : 'تقييم المندوب',
-                      subtitle: _isDelivery
-                          ? 'قم بتقييم التاجر'
-                          : 'قم بتقييم المندوب بناءً على جودة التوصيل',
-                      isCompleted: _hasReviewed,
-                      isActive: _localOrder.status == 'Completed',
-                      isLast: true,
-                      actionWidget:
-                          _localOrder.status == 'Completed'
-                          ? (_hasReviewed
-                                ? Container(
-                                    padding: const EdgeInsets.all(6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.shade50,
-                                      borderRadius: BorderRadius.circular(6),
+                      stepNumber: 3,
+                      title: 'تم التوصيل بنجاح * إجباري',
+                      subtitle: _activeStepIndex > 3
+                          ? 'تم تسليم الطلب وتأكيده بنجاح'
+                          : (_isDelivery
+                                ? 'تم التوصيل بنجاح، اضغط لإنهاء الطلب'
+                                : 'وصل الكابتن بطلبك وتم التوصيل بنجاح'),
+                      isCompleted: _activeStepIndex > 3,
+                      isActive: _activeStepIndex == 3,
+                      isLast: false,
+                      actionWidget: _activeStepIndex == 3
+                          ? (_isDelivery
+                                ? ElevatedButton.icon(
+                                    onPressed: () =>
+                                        _updateStatusOnServer('Completed'),
+                                    icon: const Icon(
+                                      Icons.task_alt_rounded,
+                                      size: 16,
                                     ),
-                                    child: Text(
-                                      'تم التقييم بنجاح ✅',
-                                      style: GoogleFonts.tajawal(
-                                        fontSize: 11,
-                                        color: Colors.green.shade700,
+                                    label: Text(
+                                      'إنهاء واكتمال المهمة',
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 13,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2E7D32),
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                        vertical: 8,
+                                      ),
+                                    ),
                                   )
-                                : TextButton(
+                                : (!_isDelivery
+                                      ? ElevatedButton.icon(
+                                          onPressed: _confirmDelivery,
+                                          icon: const Icon(
+                                            Icons.done_all_rounded,
+                                            size: 16,
+                                          ),
+                                          label: Text(
+                                            'تأكيد استلام الطلب',
+                                            style: GoogleFonts.cairo(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(
+                                              0xFF2E7D32,
+                                            ),
+                                            foregroundColor: Colors.white,
+                                            elevation: 0,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 8,
+                                            ),
+                                          ),
+                                        )
+                                      : null))
+                          : null,
+                    ),
+
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 4: مكتمل
+                    // ═══════════════════════════════════════════════════
+                    _buildMilestoneItem(
+                      stepNumber: 4,
+                      title: 'مكتمل',
+                      subtitle: _activeStepIndex >= 4
+                          ? 'تم إنهاء وتأكيد الرحلة بالكامل بنجاح'
+                          : 'اكتمال الرحلة بعد إتمام التوصيل',
+                      isCompleted: _activeStepIndex >= 4,
+                      isActive: _activeStepIndex == 4,
+                      isLast: false,
+                    ),
+
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 5: تقييم
+                    // ═══════════════════════════════════════════════════
+_buildMilestoneItem(
+                      stepNumber: 5,
+                      title: 'تقييم',
+                      subtitle: _hasReviewed
+                          ? 'شكراً لك! تم إرسال تقييمك بنجاح'
+                          : (_isDelivery
+                                ? 'قم بتقييم التاجر/العميل'
+                                : 'قم بتقييم تجربة التوصيل والكابتن'),
+                      isCompleted: _hasReviewed,
+                      isActive: _activeStepIndex >= 4 && !_hasReviewed,
+                      isLast: true,
+                      actionWidget: _activeStepIndex >= 4
+                          ? (_hasReviewed
+                                ? Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.shade50,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star,
+                                          color: Colors.amber,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'تم التقييم بنجاح',
+                                          style: GoogleFonts.cairo(
+                                            fontSize: 12,
+                                            color: Colors.green.shade800,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : ElevatedButton.icon(
                                     onPressed: () {
                                       _ratingDialogShown = false;
+                                      final name = _isDelivery
+                                          ? (_localOrder.merchantName ??
+                                                'التاجر')
+                                          : (_localOrder.captainName ??
+                                                'المندوب المكلف');
                                       _showRatingDialog(
                                         context,
                                         name,
                                         isRatingDriver: !_isDelivery,
                                       );
                                     },
-                                    child: Text(
-                                      'اضغط هنا للتقييم',
-                                      style: GoogleFonts.tajawal(
-                                        color: const Color(0xFF1F4C9B),
-                                        fontWeight: FontWeight.bold,
+                                    icon: const Icon(
+                                      Icons.star_rate_rounded,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      'تقييم الخدمة',
+                                      style: GoogleFonts.cairo(
                                         fontSize: 13,
-                                        decoration: TextDecoration.underline,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.amber.shade700,
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                        vertical: 8,
                                       ),
                                     ),
                                   ))
-                          : Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: _localOrder.status == 'Cancelled' ||
-                                        _localOrder.status == 'Rejected'
-                                    ? Colors.red.shade50
-                                    : Colors.grey.shade100,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                _localOrder.status == 'Cancelled' ||
-                                        _localOrder.status == 'Rejected'
-                                    ? 'تم إلغاء الطلب'
-                                    : 'في انتظار اكتمال التوصيل',
-                                style: GoogleFonts.tajawal(
-                                  fontSize: 11,
-                                  color: _localOrder.status == 'Cancelled' ||
-                                          _localOrder.status == 'Rejected'
-                                      ? Colors.red.shade700
-                                      : Colors.grey.shade600,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
+                          : null,
                     ),
-
 
                     const SizedBox(height: 40),
                   ],
@@ -2105,7 +2255,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           children: [
             Text(
               name,
-              style: GoogleFonts.tajawal(
+              style: GoogleFonts.cairo(
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
                 color: Colors.black87,
@@ -2123,7 +2273,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                 const SizedBox(width: 4),
                 Text(
                   _userRating,
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                     color: Colors.grey.shade700,
@@ -2132,7 +2282,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                 const SizedBox(width: 8),
                 Text(
                   phone ?? 'رقم الهاتف غير متوفر',
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
                     color: Colors.grey.shade500,
                     fontWeight: FontWeight.w500,
@@ -2172,6 +2322,384 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
             ),
           ),
       ],
+    );
+  }
+
+  Future<void> _openExternalMap(String address, double? lat, double? lng) async {
+    Uri url;
+    if (lat != null && lng != null && lat != 0 && lng != 0) {
+      url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    } else if (address.trim().isNotEmpty) {
+      url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}');
+    } else {
+      return;
+    }
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Widget _buildOrderLocationsAndDetailsCard() {
+    final order = _localOrder;
+    final orderPrice = order.orderPrice.toInt();
+    final deliveryFee = order.deliveryFee.toInt();
+    final captainProfit = (deliveryFee * 0.8).toInt();
+    final totalOrderAndDelivery = orderPrice + deliveryFee;
+    final bool isOnlinePayment = order.isPaid;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 0. Payment Status Banner
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: isOnlinePayment ? const Color(0xFFE8F5E9) : const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isOnlinePayment ? const Color(0xFFA5D6A7) : const Color(0xFFFFE082),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  isOnlinePayment ? Icons.credit_card_rounded : Icons.payments_outlined,
+                  color: isOnlinePayment ? const Color(0xFF2E7D32) : const Color(0xFFF57F17),
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isOnlinePayment ? '💳 مدفوع إلكترونياً بالكامل' : '💵 الدفع عند الاستلام (كاش)',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: isOnlinePayment ? const Color(0xFF1B5E20) : const Color(0xFFE65100),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isOnlinePayment
+                            ? (_isDelivery
+                                ? 'الطلب وثمن المنتجات والتوصيل مدفوعة أونلاين. لا تحصّل أي مبالغ من العميل! ربحك ($captainProfit ج.م) سيُضاف لمحفظتك تلقائياً.'
+                                : 'تم سداد قيمة المنتجات ورسوم التوصيل إلكترونياً.')
+                            : (_isDelivery
+                                ? 'المطلوب تحصيله من العميل: $totalOrderAndDelivery ج.م نقدياً'
+                                : 'المطلوب سداده نقداً للكابتن عند الاستلام: $totalOrderAndDelivery ج.م.'),
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: isOnlinePayment ? const Color(0xFF2E7D32) : const Color(0xFFBF360C),
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 1. Locations Section
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.store_rounded, color: Colors.blue, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'موقع الاستلام / المتجر:',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      order.pickupAddress,
+                      style: GoogleFonts.cairo(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => _openExternalMap(
+                  order.pickupAddress,
+                  order.merchantLatitude,
+                  order.merchantLongitude,
+                ),
+                icon: const Icon(Icons.directions, color: Colors.blue, size: 22),
+                tooltip: 'الاتجاهات للمتجر',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.all(4),
+              ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Divider(height: 1, color: Color(0xFFE2E8F0)),
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.location_on_rounded, color: Colors.red, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'موقع وتفاصيل التسليم:',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      order.deliveryAddress.isNotEmpty
+                          ? order.deliveryAddress
+                          : 'عنوان التوصيل غير محدد',
+                      style: GoogleFonts.cairo(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    if (order.clientName.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'العميل: ${order.clientName}${order.phone.isNotEmpty ? " (${order.phone})" : ""}',
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => _openExternalMap(
+                  order.deliveryAddress,
+                  order.latitude,
+                  order.longitude,
+                ),
+                icon: const Icon(Icons.directions, color: Colors.red, size: 22),
+                tooltip: 'الاتجاهات للعميل',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.all(4),
+              ),
+            ],
+          ),
+
+          // 2. Custom Order Details (if any text is present)
+          if (order.details.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.receipt_long_rounded,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'تفاصيل ومحتوى الطلب:',
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    order.details.trim(),
+                    style: GoogleFonts.cairo(
+                      fontSize: 12.5,
+                      color: Colors.black87,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // 3. Notes (if present)
+          if (order.notes != null && order.notes!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFBEB),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFDE68A)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.note_alt_outlined,
+                    size: 15,
+                    color: Color(0xFFD97706),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'ملاحظات: ${order.notes!.trim()}',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        color: const Color(0xFF92400E),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // 4. Financials Summary Row
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'سعر الطلب',
+                        style: GoogleFonts.cairo(
+                          fontSize: 11,
+                          color: Colors.blue.shade800,
+                        ),
+                      ),
+                      Text(
+                        '$orderPrice ج.م',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue.shade900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (!_isDelivery) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'رسوم التوصيل',
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: Colors.orange.shade800,
+                          ),
+                        ),
+                        Text(
+                          '$deliveryFee ج.م',
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              if (_isDelivery) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'ربحك (80%)',
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: Colors.green.shade800,
+                          ),
+                        ),
+                        Text(
+                          '$captainProfit ج.م',
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -2411,7 +2939,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             Expanded(
                               child: Text(
                                 driverStatusText,
-                                style: GoogleFonts.tajawal(
+                                style: GoogleFonts.cairo(
                                   fontSize: 13,
                                   fontWeight: FontWeight.bold,
                                   color: driverStatusColor,
@@ -2436,7 +2964,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                           children: [
                             Text(
                               'المتبقي: $timeRemainingText',
-                              style: GoogleFonts.tajawal(
+                              style: GoogleFonts.cairo(
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black87,
@@ -2445,7 +2973,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             const SizedBox(width: 4),
                             Text(
                               '($remainingText)',
-                              style: GoogleFonts.tajawal(
+                              style: GoogleFonts.cairo(
                                 fontSize: 12,
                                 color: AppColors.primary,
                                 fontWeight: FontWeight.w600,
@@ -2492,7 +3020,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                           const SizedBox(width: 4),
                           Text(
                             isTargetMoving ? 'يتحرك' : 'متوقف',
-                            style: GoogleFonts.tajawal(
+                            style: GoogleFonts.cairo(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                               color: driverStatusColor,
@@ -2531,7 +3059,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                                   const SizedBox(width: 4),
                                   Text(
                                     'سعر الكيلو: ',
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 11,
                                       color: Colors.grey.shade600,
                                       fontWeight: FontWeight.w600,
@@ -2539,7 +3067,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                                   ),
                                   Text(
                                     pricePerKmText,
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 12,
                                       color: Colors.black87,
                                       fontWeight: FontWeight.bold,
@@ -2557,7 +3085,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                                   const SizedBox(width: 4),
                                   Text(
                                     'المسافة الكلية: ',
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 11,
                                       color: Colors.grey.shade600,
                                       fontWeight: FontWeight.w600,
@@ -2565,7 +3093,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                                   ),
                                   Text(
                                     totalDistanceText,
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 12,
                                       color: Colors.black87,
                                       fontWeight: FontWeight.bold,
@@ -2641,7 +3169,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
             const SizedBox(width: 4),
             Text(
               label,
-              style: GoogleFonts.tajawal(
+              style: GoogleFonts.cairo(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 color: Colors.grey.shade600,
@@ -2652,7 +3180,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         const SizedBox(height: 4),
         Text(
           value,
-          style: GoogleFonts.tajawal(
+          style: GoogleFonts.cairo(
             fontSize: 13,
             fontWeight: FontWeight.bold,
             color: Colors.black87,

@@ -16,7 +16,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:we_deliver/core/cache/cache_helper.dart';
 import 'package:we_deliver/core/api/end_point.dart';
 import 'package:we_deliver/core/di/injection_container.dart' as di;
-import 'package:we_deliver/core/services/appsflyer_service.dart';
+
 import '../../domain/entities/shipment.dart';
 import 'package:we_deliver/features/profile/presentation/bloc/review_cubit.dart';
 import '../../domain/usecases/get_shipment_by_id_usecase.dart';
@@ -64,7 +64,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
   late LatLng _driverPos;
 
   LatLng get _routeStart {
-    final hasDriverLocation = _localShipment.driverLatitude != null &&
+    final hasDriverLocation =
+        _localShipment.driverLatitude != null &&
         _localShipment.driverLongitude != null &&
         _localShipment.driverLatitude != 0.0 &&
         _localShipment.driverLongitude != 0.0;
@@ -105,7 +106,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
   }
 
   LatLng get _routeEnd {
-    final hasDriverLocation = _localShipment.driverLatitude != null &&
+    final hasDriverLocation =
+        _localShipment.driverLatitude != null &&
         _localShipment.driverLongitude != null &&
         _localShipment.driverLatitude != 0.0 &&
         _localShipment.driverLongitude != 0.0;
@@ -161,8 +163,10 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
   Timer? _merchantMovementTimeoutTimer;
   LatLng? _lastPos;
   LatLng? _lastMerchantPos;
+
   /// Map marker position — frozen while stationary; only moves when GPS confirms travel.
   LatLng? _anchoredPos;
+
   /// Last GPS point used to measure walked distance along the route.
   LatLng? _lastRouteAdvanceGpsPos;
   DateTime? _lastSocketEmitTime; // throttle server emissions
@@ -171,7 +175,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
   static const double _minWalkedMetersForRouteAdvance = 5.5;
   static const double _minGpsDeltaForMoving = 5.5;
   static const double _maxDeltaWhenStationary = 4.0;
-  static const double _maxSpeedWhenStationary = 0.55; // ~2 km/h — stop within ~1s
+  static const double _maxSpeedWhenStationary =
+      0.55; // ~2 km/h — stop within ~1s
   static const double _minSpeedMsForMoving = 0.9;
   double _lastKnownSpeedMs = 1.4; // default ~5 km/h walking
   bool? _lastRouteWasDeliveryLeg;
@@ -311,7 +316,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
       _localShipment.toLatitude ?? 30.0074,
       _localShipment.toLongitude ?? 31.4913,
     );
-    final hasDrv = _localShipment.driverLatitude != null &&
+    final hasDrv =
+        _localShipment.driverLatitude != null &&
         _localShipment.driverLongitude != null &&
         _localShipment.driverLatitude != 0.0 &&
         _localShipment.driverLongitude != 0.0;
@@ -519,7 +525,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
             _localShipment.toLongitude ?? 31.4913,
           );
           if (!_isDelivery) {
-            final hasDrv = _localShipment.driverLatitude != null &&
+            final hasDrv =
+                _localShipment.driverLatitude != null &&
                 _localShipment.driverLongitude != null &&
                 _localShipment.driverLatitude != 0.0 &&
                 _localShipment.driverLongitude != 0.0;
@@ -547,28 +554,76 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
   }
 
   void _updateMilestoneSteps() {
-    if (_hasStatus([ShipmentStatus.newShipment])) {
-      _activeStepIndex = 1;
-      _stopGpsStreaming();
-    } else if (_hasStatus([ShipmentStatus.readyForAssignment])) {
-      _activeStepIndex = 2;
-      _stopGpsStreaming();
-    } else if (_hasStatus([ShipmentStatus.assignedToCaptain, ShipmentStatus.captainArrived])) {
-      _activeStepIndex = 3;
+    if (_hasStatus([
+      ShipmentStatus.assignedToCaptain,
+      'assigned to captain',
+      'تم قبول الطلب',
+      'تم قبول الكابتن للمهمة',
+      'جديدة',
+      'جديد',
+      'pending',
+      ShipmentStatus.readyForAssignment,
+      'ready for assignment',
+      'في انتظار المندوب',
+      ShipmentStatus.captainArrived,
+      'captain arrived',
+      'في الطريق للاستلام',
+      'فى الطريق للاستلام',
+      'جاري الاستلام',
+    ])) {
+      _activeStepIndex = 1; // 1. تم قبول الطلب (المطلوب: تم استلام الشحنة)
       if (_isDelivery) {
         _startGpsStreaming();
       } else {
         _stopGpsStreaming();
       }
-    } else if (_hasStatus([ShipmentStatus.pickedUp, ShipmentStatus.inTransit, ShipmentStatus.delivered])) {
-      _activeStepIndex = 4;
+    } else if (_hasStatus([
+      ShipmentStatus.pickedUp,
+      'picked up',
+      'تم استلام الشحنة',
+      'تم الاستلام',
+      'تم استلام الشحنة / شراء الطلبات',
+      ShipmentStatus.inTransit,
+      'in transit',
+      'في الطريق للتسليم',
+      'فى الطريق للتسليم',
+      'جاري التوصيل',
+      'قيد التوصيل',
+    ])) {
+      _activeStepIndex = 2; // 2. تم استلام الشحنة (المطلوب: تم التسليم)
       if (_isDelivery) {
         _startGpsStreaming();
       } else {
         _stopGpsStreaming();
       }
-    } else if (_hasStatus([ShipmentStatus.completed, ShipmentStatus.cancelled])) {
-      _activeStepIndex = 5;
+    } else if (_hasStatus([
+      ShipmentStatus.delivered,
+      'delivered',
+      'تم التسليم بنجاح',
+      'تم التوصيل بنجاح',
+      'تم التوصيل',
+      'تم التسليم',
+    ])) {
+      _activeStepIndex = 3; // 3. تم التوصيل بنجاح
+      _stopGpsStreaming();
+    } else if (_hasStatus([
+      ShipmentStatus.completed,
+      'completed',
+      'مكتملة',
+      'مكتمل',
+      'منتهية',
+      'finished',
+    ])) {
+      _activeStepIndex = 4; // 4. مكتمل
+      _stopGpsStreaming();
+    } else if (_hasStatus([
+      ShipmentStatus.cancelled,
+      'cancelled',
+      'ملغاة',
+      'ملغي',
+      'مرفوض',
+    ])) {
+      _activeStepIndex = 10;
       _stopGpsStreaming();
     }
   }
@@ -718,9 +773,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
       }
     }
     if (idx >= _polylineCoordinates.length - 1) return 0;
-    return _calculatePolylineDistance(
-      _polylineCoordinates.sublist(idx),
-    );
+    return _calculatePolylineDistance(_polylineCoordinates.sublist(idx));
   }
 
   /// Advance yellow "done" segment only by real walked GPS distance on the route.
@@ -785,9 +838,10 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
     }
 
     _positionSubscription?.cancel();
-    _positionSubscription = Geolocator.getPositionStream(
-      locationSettings: _captainStreamSettings(),
-    ).listen((Position position) {
+    _positionSubscription =
+        Geolocator.getPositionStream(
+          locationSettings: _captainStreamSettings(),
+        ).listen((Position position) {
           if (position.accuracy > 18) return;
 
           final rawPos = LatLng(position.latitude, position.longitude);
@@ -812,7 +866,9 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
             if (mounted) {
               setState(() {
                 _isDriverMoving = false;
-                _timeRemaining = _formatRemainingTime(_remainingPolylineMeters());
+                _timeRemaining = _formatRemainingTime(
+                  _remainingPolylineMeters(),
+                );
               });
             }
             return;
@@ -909,53 +965,6 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
     _movementTimeoutTimer?.cancel();
   }
 
-  Future<void> _confirmPickup() async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(color: AppColors.primary),
-      ),
-    );
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      Position position = await Geolocator.getCurrentPosition();
-      await di.sl<Dio>().post(
-        '${EndPoint.baseUrl}${EndPoint.confirmShipmentPickup(_localShipment.id.toString())}',
-        data: {'latitude': position.latitude, 'longitude': position.longitude},
-      );
-      if (mounted) {
-        Navigator.pop(context); // pop loader
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم تأكيد تسليم الشحنة للمندوب بنجاح'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        _fetchLatestShipmentDetails();
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // pop loader
-        String msg = 'فشل التأكيد';
-        if (e is DioException) {
-          if (e.response?.data is Map) {
-            msg = e.response!.data['message'] ?? 'فشل التأكيد';
-          }
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('فشل التأكيد: $msg'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _confirmDelivery() async {
     showDialog(
       context: context,
@@ -975,13 +984,6 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
         data: {'latitude': position.latitude, 'longitude': position.longitude},
       );
       if (mounted) {
-        di.sl<AppsFlyerService>().logEvent('af_purchase', {
-          'order_id': _localShipment.id,
-          'price': _localShipment.price,
-          'currency': 'EGP',
-          'items_count': 1,
-        });
-
         Navigator.pop(context); // pop loader
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1010,6 +1012,232 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
     }
   }
 
+  void _showMandatoryPickupConfirmation() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: Color(0xFF2E7D32),
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'تأكيد استلام الشحنة *',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'يرجى التأكد من استلام الشحنة من موقع الاستلام بحالة سليمة ومطابقة للبيانات.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: Colors.amber.shade800,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'هذه الخطوة إجبارية لبدء التوصيل إلى العميل.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.amber.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _updateStatusOnServer(ShipmentStatus.pickedUp);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
+              ),
+              child: const Text(
+                'تأكيد الاستلام الآن',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMandatoryDeliveryConfirmation() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.check_circle_outline,
+                  color: AppColors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'تأكيد التوصيل بنجاح *',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'يرجى التأكد من تسليم الشحنة للعميل المستلم واستلام المبلغ المطلوب بالكامل.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade700,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.verified_outlined,
+                      color: Color(0xFF2E7D32),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'هذه الخطوة إجبارية لإتمام وتأكيد الشحنة واحتساب أرباحك.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.green.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text(
+                'إلغاء',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _updateStatusOnServer('Delivered');
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2E7D32),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
+              ),
+              child: const Text(
+                'تأكيد التوصيل الآن',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _updateStatusOnServer(String status) async {
     try {
       showDialog(
@@ -1022,7 +1250,9 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
 
       double? lat;
       double? lng;
-      if ((status == ShipmentStatus.pickedUp || status == ShipmentStatus.delivered) && _isDelivery) {
+      if ((status == ShipmentStatus.pickedUp ||
+              status == ShipmentStatus.delivered) &&
+          _isDelivery) {
         lat = _driverPos.latitude;
         lng = _driverPos.longitude;
       }
@@ -1035,14 +1265,9 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
       );
 
       if (mounted) {
-        if (status == ShipmentStatus.delivered || status == 'منتهية' || status == 'completed') {
-          di.sl<AppsFlyerService>().logEvent('af_purchase', {
-            'order_id': _localShipment.id,
-            'price': _localShipment.price,
-            'currency': 'EGP',
-            'items_count': 1,
-          });
-        }
+        if (status == ShipmentStatus.delivered ||
+            status == 'منتهية' ||
+            status == 'completed') {}
         Navigator.pop(context); // Pop loading
         _fetchLatestShipmentDetails();
       }
@@ -1069,7 +1294,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
       ShipmentStatus.readyForAssignment,
     ]);
 
-    final hasDriverPos = _driverPos.latitude != 0.0 && _driverPos.longitude != 0.0;
+    final hasDriverPos =
+        _driverPos.latitude != 0.0 && _driverPos.longitude != 0.0;
 
     if (isNewOrPending || !hasDriverPos) {
       return;
@@ -1235,7 +1461,11 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
     }
   }
 
-  void _updateRouteOnMap(String encodedPolyline, double distanceMeters, double durationSeconds) {
+  void _updateRouteOnMap(
+    String encodedPolyline,
+    double distanceMeters,
+    double durationSeconds,
+  ) {
     List<PointLatLng> result = PolylinePoints.decodePolyline(encodedPolyline);
 
     if (result.isNotEmpty) {
@@ -1338,7 +1568,8 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
     _lastRouteAdvanceGpsPos = _anchoredPos ?? _driverPos;
 
     _totalRouteDistanceMeters = _calculatePolylineDistance(smoothPoints);
-    _totalTripMinutes = (_totalRouteDistanceMeters / 11.1 / 60).round(); // ~40 km/h
+    _totalTripMinutes = (_totalRouteDistanceMeters / 11.1 / 60)
+        .round(); // ~40 km/h
 
     setState(() {
       _timeRemaining = _formatRemainingTime(_remainingPolylineMeters());
@@ -1443,7 +1674,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
         Polyline(
           polylineId: const PolylineId('route_remaining'),
           points: remainingPoints,
-          color: const Color(0xFF1F4C9B),
+          color: AppColors.primary,
           width: 7,
           zIndex: 3,
           jointType: JointType.round,
@@ -1628,167 +1859,148 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
           canPop: false,
           child: StatefulBuilder(
             builder: (context, setDialogState) {
-            return Directionality(
-              textDirection: TextDirection.rtl,
-              child: Dialog(
-                backgroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        isRatingDriver ? 'تقييم المندوب' : 'تقييم التاجر',
-                        style: GoogleFonts.tajawal(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                      const SizedBox(height: 16),
-
-                      Text(
-                        'كيف كانت تجربتك في التعامل مع $name؟',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.tajawal(
-                          fontSize: 13,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(5, (index) {
-                          final starVal = index + 1;
-                          final isSelected = starVal <= currentRating;
-                          return GestureDetector(
-                            onTap: () {
-                              setDialogState(() {
-                                currentRating = starVal;
-                              });
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4.0,
-                              ),
-                              child: Icon(
-                                Icons.star_rounded,
-                                color: isSelected
-                                    ? const Color(0xFFFFB000)
-                                    : Colors.grey.shade300,
-                                size: 36,
-                              ),
-                            ),
-                          );
-                        }),
-                      ),
-                      const SizedBox(height: 20),
-
-                      Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF9FAFC),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: TextField(
-                          controller: commentController,
-                          maxLines: 3,
-                          style: GoogleFonts.tajawal(fontSize: 13),
-                          decoration: InputDecoration(
-                            hintText: 'اكتب تعليقك هنا (اختياري)...',
-                            hintStyle: GoogleFonts.tajawal(
-                              color: Colors.grey.shade400,
-                              fontSize: 13,
-                            ),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.all(12),
+              return Directionality(
+                textDirection: TextDirection.rtl,
+                child: Dialog(
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          isRatingDriver ? 'تقييم المندوب' : 'تقييم التاجر',
+                          style: GoogleFonts.cairo(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 24),
+                        const SizedBox(height: 12),
+                        const Divider(height: 1, color: Color(0xFFEEEEEE)),
+                        const SizedBox(height: 16),
 
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            Navigator.pop(context); // close dialog
-                            await _reviewCubit.submitReview(
-                              shipmentId: _localShipment.id,
-                              rating: currentRating,
-                              comment: commentController.text.isEmpty
-                                  ? null
-                                  : commentController.text,
-                              tags: null,
-                            );
-                            await _loadRatingAndReviewStatus();
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isRatingDriver
-                                        ? 'شكراً لتقييمك للمندوب! تم حفظ التقييم بنجاح.'
-                                        : 'شكراً لتقييمك! تم حفظ التقييم بنجاح.',
-                                    style: GoogleFonts.tajawal(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  backgroundColor: Colors.green.shade600,
+                        Text(
+                          'كيف كانت تجربتك في التعامل مع $name؟',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(5, (index) {
+                            final starVal = index + 1;
+                            final isSelected = starVal <= currentRating;
+                            return GestureDetector(
+                              onTap: () {
+                                setDialogState(() {
+                                  currentRating = starVal;
+                                });
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4.0,
                                 ),
-                              );
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1F4C9B),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 0,
+                                child: Icon(
+                                  Icons.star_rounded,
+                                  color: isSelected
+                                      ? const Color(0xFFFFB000)
+                                      : Colors.grey.shade300,
+                                  size: 36,
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 20),
+
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF9FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.shade200),
                           ),
-                          child: Text(
-                            'تأكيد التقييم',
-                            style: GoogleFonts.tajawal(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                          child: TextField(
+                            controller: commentController,
+                            maxLines: 3,
+                            style: GoogleFonts.cairo(fontSize: 13),
+                            decoration: InputDecoration(
+                              hintText: 'اكتب تعليقك هنا (اختياري)...',
+                              hintStyle: GoogleFonts.cairo(
+                                color: Colors.grey.shade400,
+                                fontSize: 13,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.all(12),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 24),
+
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              Navigator.pop(context); // close dialog
+                              await _reviewCubit.submitReview(
+                                shipmentId: _localShipment.id,
+                                rating: currentRating,
+                                comment: commentController.text.isEmpty
+                                    ? null
+                                    : commentController.text,
+                                tags: null,
+                              );
+                              await _loadRatingAndReviewStatus();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isRatingDriver
+                                          ? 'شكراً لتقييمك للمندوب! تم حفظ التقييم بنجاح.'
+                                          : 'شكراً لتقييمك! تم حفظ التقييم بنجاح.',
+                                      style: GoogleFonts.cairo(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.green.shade600,
+                                  ),
+                                );
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: Text(
+                              'تأكيد التقييم',
+                              style: GoogleFonts.cairo(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
-        ),
-      );
-    },
-  );
-  }
-
-  Widget _buildBlueButton(String label, VoidCallback onPressed) {
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF1F4C9B),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      ),
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        style: GoogleFonts.tajawal(fontSize: 12, fontWeight: FontWeight.bold),
-        overflow: TextOverflow.ellipsis,
-      ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1849,7 +2061,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 14,
                     fontWeight: isCompleted || isActive
                         ? FontWeight.bold
@@ -1862,7 +2074,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
                     color: isCompleted || isActive
                         ? Colors.grey.shade600
@@ -1886,7 +2098,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
               children: [
                 Text(
                   completionTime.split('\n')[0],
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 11,
                     color: Colors.grey.shade500,
                     fontWeight: FontWeight.bold,
@@ -1895,7 +2107,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                 const SizedBox(height: 2),
                 Text(
                   completionTime.split('\n')[1],
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 10,
                     color: Colors.grey.shade400,
                   ),
@@ -1910,7 +2122,6 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
   }
 
   Widget _buildMerchantBottomSheet() {
-    final driverName = _localShipment.driverName ?? 'المندوب المكلف';
     final displayId = _localShipment.shipmentNumber;
 
     return DraggableScrollableSheet(
@@ -1947,14 +2158,18 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                     _buildProfileHeader(),
                     const SizedBox(height: 12),
                     const Divider(height: 1, color: Color(0xFFEEEEEE)),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
+
+                    // Shipment Details & Delivery Location Card with Payment Badge
+                    _buildShipmentLocationsAndDetailsCard(),
+                    const SizedBox(height: 18),
 
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           "حالة الشحنة",
-                          style: GoogleFonts.tajawal(
+                          style: GoogleFonts.cairo(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
                             color: Colors.black87,
@@ -1962,7 +2177,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                         ),
                         Text(
                           'رقم: $displayId',
-                          style: GoogleFonts.tajawal(
+                          style: GoogleFonts.cairo(
                             fontSize: 13,
                             color: Colors.grey.shade500,
                             fontWeight: FontWeight.w600,
@@ -1972,126 +2187,121 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                     ),
                     const SizedBox(height: 24),
 
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 1: تم قبول الطلب
+                    // ═══════════════════════════════════════════════════
                     _buildMilestoneItem(
                       stepNumber: 1,
-                      title: "تم ارسال الطلب",
-                      subtitle: "تم ارسال طلبك بنجاح",
+                      title: "تم قبول الطلب",
+                      subtitle: _activeStepIndex > 1
+                          ? "تم قبول الشحنة وبدء التنفيذ"
+                          : (_isDelivery
+                                ? "لقد قبلت المهمة، توجه للاستلام ثم اضغط تم الاستلام"
+                                : "وافق الكابتن على استلام وتوصيل الشحنة"),
                       isCompleted: _activeStepIndex > 1,
                       isActive: _activeStepIndex == 1,
                       isLast: false,
-                    ),
-
-                    _buildMilestoneItem(
-                      stepNumber: 2,
-                      title: "تم قبول الطلب",
-                      subtitle: _activeStepIndex > 2
-                          ? "تم قبول الطلب من قبل المندوب"
-                          : "في انتظار قبول الكابتن للطلب",
-                      isCompleted: _activeStepIndex > 2,
-                      isActive: _activeStepIndex == 2,
-                      isLast: false,
-                    ),
-
-                    _buildMilestoneItem(
-                      stepNumber: 3,
-                      title: "تسليم الشحنة للمندوب",
-                      subtitle: _activeStepIndex > 3
-                          ? "تم تسليم الشحنة للمندوب بنجاح"
-                          : "يرجى تأكيد تسليم الشحنة للمندوب باليد",
-                      isCompleted: _activeStepIndex > 3,
-                      isActive: _activeStepIndex == 3,
-                      isLast: false,
-                      actionWidget: _activeStepIndex == 3
-                          ? ElevatedButton(
-                              onPressed: () {
-                                if (_isDelivery) {
-                                  _updateStatusOnServer(
-                                    ShipmentStatus.pickedUp,
-                                  );
-                                } else {
-                                  _confirmPickup();
-                                }
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFFF0F4FA),
-                                foregroundColor: const Color(0xFF1F4C9B),
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                      actionWidget: _activeStepIndex == 1 && _isDelivery
+                          ? SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: _showMandatoryPickupConfirmation,
+                                icon: const Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 16,
                                 ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 24,
-                                  vertical: 8,
+                                label: Text(
+                                  'تم استلام الشحنة',
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                              child: Text(
-                                _isDelivery ? "تم الاستلام" : "تأكيد الاستلام",
-                                style: GoogleFonts.tajawal(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF2E7D32),
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 10,
+                                  ),
                                 ),
                               ),
                             )
                           : null,
                     ),
 
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 2: تم استلام الشحنة
+                    // ═══════════════════════════════════════════════════
                     _buildMilestoneItem(
-                      stepNumber: 4,
-                      title: "توصيل الشحنة",
-                      subtitle:
-                          _hasStatus([ShipmentStatus.completed])
-                          ? "تم تسليم الشحنة للعميل بنجاح"
-                          : _hasStatus([ShipmentStatus.cancelled])
-                          ? "تم إلغاء الشحنة أو إرجاعها"
-                          : "المندوب في الطريق حالياً لتسليم الشحنة",
-                      isCompleted: _activeStepIndex > 4,
-                      isActive: _activeStepIndex == 4,
+                      stepNumber: 2,
+                      title: "تم استلام الشحنة",
+                      subtitle: _activeStepIndex > 2
+                          ? "تم استلام الشحنة وتوصيلها للعميل بنجاح"
+                          : (_isDelivery
+                                ? "الشحنة بحوزتك الآن، يرجى التوجه لتسليمها للعميل"
+                                : "تم استلام الشحنة وهي في الطريق للعميل"),
+                      isCompleted: _activeStepIndex > 2,
+                      isActive: _activeStepIndex == 2,
                       isLast: false,
-                      actionWidget: _activeStepIndex == 4
+                      actionWidget: _activeStepIndex == 2 && _isDelivery
                           ? Row(
                               children: [
                                 Expanded(
-                                  child: _buildBlueButton(
-                                    _isDelivery
-                                        ? "تم التوصيل"
-                                        : "تأكيد التسليم",
-                                    () {
-                                      if (_isDelivery) {
-                                        _updateStatusOnServer(
-                                          ShipmentStatus.delivered,
-                                        );
-                                      } else {
-                                        _confirmDelivery();
-                                      }
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed: () => _updateStatusOnServer(
-                                      ShipmentStatus.cancelled,
+                                  child: ElevatedButton.icon(
+                                    onPressed: _showMandatoryDeliveryConfirmation,
+                                    icon: const Icon(
+                                      Icons.check_circle_outline,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      'تم التسليم للعميل',
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                     style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFFFFF0F1),
-                                      foregroundColor: const Color(0xFFE53935),
+                                      backgroundColor: const Color(0xFF2E7D32),
+                                      foregroundColor: Colors.white,
                                       elevation: 0,
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(10),
                                       ),
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 8,
+                                        horizontal: 12,
+                                        vertical: 10,
                                       ),
                                     ),
-                                    child: Text(
-                                      _isDelivery ? "مرتجع / فشل" : 'مرتجع',
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.tajawal(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton(
+                                  onPressed: () => _updateStatusOnServer(
+                                    ShipmentStatus.cancelled,
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFFF0F1),
+                                    foregroundColor: const Color(0xFFE53935),
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    "مرتجع / فشل",
+                                    textAlign: TextAlign.center,
+                                    style: GoogleFonts.cairo(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                 ),
@@ -2100,80 +2310,184 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                           : null,
                     ),
 
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 3: تم التوصيل بنجاح
+                    // ═══════════════════════════════════════════════════
                     _buildMilestoneItem(
-                      stepNumber: 5,
-                      title: _isDelivery ? 'تقييم التاجر' : 'تقييم المندوب',
-                      subtitle: _isDelivery
-                          ? 'قم بتقييم التاجر بناءً على تجربة التعامل'
-                          : 'قم بتقييم المندوب بناءً على جودة التوصيل',
-                      isCompleted: _hasReviewed,
-                      isActive:
-                          _hasStatus([ShipmentStatus.completed]),
-                      isLast: true,
-                      actionWidget:
-                          _hasStatus([ShipmentStatus.completed])
-                          ? (_hasReviewed
-                                ? Container(
-                                    padding: const EdgeInsets.all(6),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.shade50,
-                                      borderRadius: BorderRadius.circular(6),
+                      stepNumber: 3,
+                      title: "تم التوصيل بنجاح",
+                      subtitle: _activeStepIndex > 3
+                          ? "تم تسليم الشحنة وتأكيدها بنجاح"
+                          : (_isDelivery
+                                ? "تم التوصيل بنجاح، اضغط لإنهاء الشحنة"
+                                : "وصل الكابتن وتم التوصيل بنجاح"),
+                      isCompleted: _activeStepIndex > 3,
+                      isActive: _activeStepIndex == 3,
+                      isLast: false,
+                      actionWidget: _activeStepIndex == 3
+                          ? (_isDelivery
+                                ? ElevatedButton.icon(
+                                    onPressed: () => _updateStatusOnServer(
+                                      ShipmentStatus.completed,
                                     ),
-                                    child: Text(
-                                      'تم التقييم بنجاح ✅',
-                                      style: GoogleFonts.tajawal(
-                                        fontSize: 11,
-                                        color: Colors.green.shade700,
+                                    icon: const Icon(
+                                      Icons.task_alt_rounded,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      'إنهاء واكتمال المهمة',
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 13,
                                         fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF2E7D32),
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 20,
+                                        vertical: 8,
                                       ),
                                     ),
                                   )
-                                : TextButton(
+                                : (!_isDelivery
+                                      ? ElevatedButton.icon(
+                                          onPressed: _confirmDelivery,
+                                          icon: const Icon(
+                                            Icons.done_all_rounded,
+                                            size: 16,
+                                          ),
+                                          label: Text(
+                                            'تأكيد استلام الشحنة',
+                                            style: GoogleFonts.cairo(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(
+                                              0xFF2E7D32,
+                                            ),
+                                            foregroundColor: Colors.white,
+                                            elevation: 0,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 8,
+                                            ),
+                                          ),
+                                        )
+                                      : null))
+                          : null,
+                    ),
+
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 4: مكتمل
+                    // ═══════════════════════════════════════════════════
+                    _buildMilestoneItem(
+                      stepNumber: 4,
+                      title: "مكتمل",
+                      subtitle: _activeStepIndex >= 4
+                          ? "تم إنهاء وتأكيد الشحنة بالكامل بنجاح"
+                          : "اكتمال الشحنة بعد إتمام التوصيل",
+                      isCompleted: _activeStepIndex >= 4,
+                      isActive: _activeStepIndex == 4,
+                      isLast: false,
+                    ),
+
+                    // ═══════════════════════════════════════════════════
+                    // الخطوة 5: تقييم
+                    // ═══════════════════════════════════════════════════
+                    _buildMilestoneItem(
+                      stepNumber: 5,
+                      title: "تقييم",
+                      subtitle: _hasReviewed
+                          ? "شكراً لك! تم إرسال تقييمك بنجاح"
+                          : (_isDelivery
+                                ? "قم بتقييم التاجر/العميل"
+                                : "قم بتقييم تجربة التوصيل والكابتن"),
+                      isCompleted: _hasReviewed,
+                      isActive: _activeStepIndex >= 4 && !_hasReviewed,
+                      isLast: true,
+                      actionWidget: _activeStepIndex >= 4
+                          ? (_hasReviewed
+                                ? Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.shade50,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star,
+                                          color: Colors.amber,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'تم التقييم بنجاح',
+                                          style: GoogleFonts.cairo(
+                                            fontSize: 12,
+                                            color: Colors.green.shade800,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : ElevatedButton.icon(
                                     onPressed: () {
                                       _ratingDialogShown = false;
+                                      final name = _isDelivery
+                                          ? (_localShipment.clientName ??
+                                                'التاجر')
+                                          : (_localShipment.driverName ??
+                                                'المندوب المكلف');
                                       _showRatingDialog(
                                         context,
-                                        _isDelivery
-                                            ? (_localShipment.clientName ??
-                                                  'التاجر')
-                                            : driverName,
+                                        name,
                                         isRatingDriver: !_isDelivery,
                                       );
                                     },
-                                    child: Text(
-                                      'اضغط هنا للتقييم',
-                                      style: GoogleFonts.tajawal(
-                                        color: const Color(0xFF1F4C9B),
+                                    icon: const Icon(
+                                      Icons.star_rate_rounded,
+                                      size: 16,
+                                    ),
+                                    label: Text(
+                                      _isDelivery
+                                          ? 'تقييم التاجر/العميل'
+                                          : 'تقييم الكابتن',
+                                      style: GoogleFonts.cairo(
+                                        fontSize: 12,
                                         fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                        decoration: TextDecoration.underline,
+                                      ),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFFF78710),
+                                      foregroundColor: Colors.white,
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 8,
                                       ),
                                     ),
                                   ))
-                          : Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade50,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                _hasStatus([ShipmentStatus.completed])
-                                    ? 'اكتملت الرحلة'
-                                    : _hasStatus([ShipmentStatus.cancelled])
-                                    ? 'تم إلغاء الشحنة'
-                                    : 'في انتظار اكتمال التوصيل',
-                                style: GoogleFonts.tajawal(
-                                  fontSize: 11,
-                                  color:
-                                      _hasStatus([ShipmentStatus.completed])
-                                      ? Colors.green.shade700
-                                      : _hasStatus([ShipmentStatus.cancelled])
-                                      ? Colors.red.shade700
-                                      : Colors.grey.shade600,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
+                          : null,
                     ),
                     const SizedBox(height: 40),
                   ],
@@ -2226,7 +2540,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
           children: [
             Text(
               name,
-              style: GoogleFonts.tajawal(
+              style: GoogleFonts.cairo(
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
                 color: Colors.black87,
@@ -2244,7 +2558,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                 const SizedBox(width: 4),
                 Text(
                   _userRating,
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                     color: Colors.grey.shade700,
@@ -2253,7 +2567,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                 const SizedBox(width: 8),
                 Text(
                   phone ?? 'رقم الهاتف غير متوفر',
-                  style: GoogleFonts.tajawal(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
                     color: Colors.grey.shade500,
                     fontWeight: FontWeight.w500,
@@ -2296,16 +2610,395 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
     );
   }
 
+  Future<void> _openExternalMap(String address, double? lat, double? lng) async {
+    Uri url;
+    if (lat != null && lng != null && lat != 0 && lng != 0) {
+      url = Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    } else if (address.trim().isNotEmpty) {
+      url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}');
+    } else {
+      return;
+    }
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Widget _buildShipmentLocationsAndDetailsCard() {
+    final shipment = _localShipment;
+    final goodsPrice = (shipment.goodsPrice ?? 0).toInt();
+    final deliveryFee = (shipment.negotiatedPrice ?? shipment.price).toInt();
+    final captainProfit = (deliveryFee * 0.8).toInt();
+    final totalToCollect = goodsPrice + deliveryFee;
+    final bool isOnlinePayment = shipment.isPaid;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF9FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 0. Payment Status Banner
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: isOnlinePayment ? const Color(0xFFE8F5E9) : const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: isOnlinePayment ? const Color(0xFFA5D6A7) : const Color(0xFFFFE082),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  isOnlinePayment ? Icons.credit_card_rounded : Icons.payments_outlined,
+                  color: isOnlinePayment ? const Color(0xFF2E7D32) : const Color(0xFFF57F17),
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isOnlinePayment ? '💳 الشحنة مدفوعة إلكترونياً' : '💵 الدفع عند الاستلام (كاش)',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: isOnlinePayment ? const Color(0xFF1B5E20) : const Color(0xFFE65100),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isOnlinePayment
+                            ? (_isDelivery
+                                ? 'تم دفع قيمة الشحنة والتوصيل إلكترونياً. لا تحصّل أي مبالغ من العميل! ربحك ($captainProfit ج.م) سيُضاف لمحفظتك تلقائياً.'
+                                : 'تم دفع قيمة التوصيل إلكترونياً.')
+                            : (_isDelivery
+                                ? (goodsPrice > 0
+                                    ? 'المطلوب تحصيله من المستلم: $totalToCollect ج.م نقدياً (ثمن الشحنة: $goodsPrice ج.م + التوصيل: $deliveryFee ج.م)'
+                                    : 'المطلوب تحصيله من المستلم: $deliveryFee ج.م نقدياً')
+                                : 'المطلوب سداده نقداً عند الاستلام: $totalToCollect ج.م.'),
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: isOnlinePayment ? const Color(0xFF2E7D32) : const Color(0xFFBF360C),
+                          fontWeight: FontWeight.w600,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 1. Locations Section
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.store_rounded, color: Colors.blue, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'موقع الاستلام / التاجر:',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      shipment.fromAddress,
+                      style: GoogleFonts.cairo(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => _openExternalMap(
+                  shipment.fromAddress,
+                  shipment.merchantLatitude ?? shipment.startLatitude,
+                  shipment.merchantLongitude ?? shipment.startLongitude,
+                ),
+                icon: const Icon(Icons.directions, color: Colors.blue, size: 22),
+                tooltip: 'الاتجاهات للتاجر',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.all(4),
+              ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Divider(height: 1, color: Color(0xFFE2E8F0)),
+          ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.location_on_rounded, color: Colors.red, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'موقع وتسليم الشحنة:',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      shipment.toAddress.isNotEmpty ? shipment.toAddress : 'عنوان التوصيل غير محدد',
+                      style: GoogleFonts.cairo(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    if (shipment.clientName != null && shipment.clientName!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'العميل: ${shipment.clientName}${shipment.clientPhone != null ? " (${shipment.clientPhone})" : ""}',
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: () => _openExternalMap(
+                  shipment.toAddress,
+                  shipment.toLatitude,
+                  shipment.toLongitude,
+                ),
+                icon: const Icon(Icons.directions, color: Colors.red, size: 22),
+                tooltip: 'الاتجاهات للتسليم',
+                constraints: const BoxConstraints(),
+                padding: const EdgeInsets.all(4),
+              ),
+            ],
+          ),
+
+          // 2. Shipment Title / Notes
+          if (shipment.title != null && shipment.title!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCBD5E1)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.inventory_2_outlined,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'محتوى الشحنة:',
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    shipment.title!.trim(),
+                    style: GoogleFonts.cairo(
+                      fontSize: 12.5,
+                      color: Colors.black87,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          if (shipment.notes != null && shipment.notes!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFBEB),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFFDE68A)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.note_alt_outlined,
+                    size: 15,
+                    color: Color(0xFFD97706),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'ملاحظات: ${shipment.notes!.trim()}',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        color: const Color(0xFF92400E),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // 3. Financials Summary Row
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              if (goodsPrice > 0) ...[
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'سعر الشحنة',
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: Colors.blue.shade800,
+                          ),
+                        ),
+                        Text(
+                          '$goodsPrice ج.م',
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              if (!_isDelivery) ...[
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'أجرة التوصيل',
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: Colors.orange.shade800,
+                          ),
+                        ),
+                        Text(
+                          '$deliveryFee ج.م',
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              if (_isDelivery) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'ربحك (80%)',
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: Colors.green.shade800,
+                          ),
+                        ),
+                        Text(
+                          '$captainProfit ج.م',
+                          style: GoogleFonts.cairo(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTripSummaryCard() {
     double traversedMeters = 0.0;
     double remainingMeters = 0.0;
 
     final bool hasDriver = !_hasStatus([
-          ShipmentStatus.newShipment,
-          ShipmentStatus.negotiation,
-          ShipmentStatus.awaitingPayment,
-          ShipmentStatus.readyForAssignment,
-        ]);
+      ShipmentStatus.newShipment,
+      ShipmentStatus.negotiation,
+      ShipmentStatus.awaitingPayment,
+      ShipmentStatus.readyForAssignment,
+    ]);
     final bool hasDriverLocation =
         _localShipment.driverLatitude != null &&
         _localShipment.driverLongitude != null &&
@@ -2533,7 +3226,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                             Expanded(
                               child: Text(
                                 driverStatusText,
-                                style: GoogleFonts.tajawal(
+                                style: GoogleFonts.cairo(
                                   fontSize: 13,
                                   fontWeight: FontWeight.bold,
                                   color: driverStatusColor,
@@ -2558,7 +3251,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                           children: [
                             Text(
                               'المتبقي: $timeRemainingText',
-                              style: GoogleFonts.tajawal(
+                              style: GoogleFonts.cairo(
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black87,
@@ -2567,7 +3260,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                             const SizedBox(width: 4),
                             Text(
                               '($remainingText)',
-                              style: GoogleFonts.tajawal(
+                              style: GoogleFonts.cairo(
                                 fontSize: 12,
                                 color: AppColors.primary,
                                 fontWeight: FontWeight.w600,
@@ -2615,7 +3308,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                           const SizedBox(width: 4),
                           Text(
                             isTargetMoving ? 'يتحرك' : 'متوقف',
-                            style: GoogleFonts.tajawal(
+                            style: GoogleFonts.cairo(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
                               color: driverStatusColor,
@@ -2654,7 +3347,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                                   const SizedBox(width: 4),
                                   Text(
                                     'سعر الكيلو: ',
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 11,
                                       color: Colors.grey.shade600,
                                       fontWeight: FontWeight.w600,
@@ -2662,7 +3355,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                                   ),
                                   Text(
                                     pricePerKmText,
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 12,
                                       color: Colors.black87,
                                       fontWeight: FontWeight.bold,
@@ -2680,7 +3373,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                                   const SizedBox(width: 4),
                                   Text(
                                     'المسافة الكلية: ',
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 11,
                                       color: Colors.grey.shade600,
                                       fontWeight: FontWeight.w600,
@@ -2688,7 +3381,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
                                   ),
                                   Text(
                                     totalDistanceText,
-                                    style: GoogleFonts.tajawal(
+                                    style: GoogleFonts.cairo(
                                       fontSize: 12,
                                       color: Colors.black87,
                                       fontWeight: FontWeight.bold,
@@ -2764,7 +3457,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
             const SizedBox(width: 4),
             Text(
               label,
-              style: GoogleFonts.tajawal(
+              style: GoogleFonts.cairo(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 color: Colors.grey.shade600,
@@ -2775,7 +3468,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
         const SizedBox(height: 4),
         Text(
           value,
-          style: GoogleFonts.tajawal(
+          style: GoogleFonts.cairo(
             fontSize: 13,
             fontWeight: FontWeight.bold,
             color: Colors.black87,
@@ -2864,7 +3557,7 @@ class _TrackShipmentScreenState extends State<TrackShipmentScreen> {
               //           ),
               //           child: Text(
               //             _timeRemaining,
-              //             style: GoogleFonts.tajawal(
+              //             style: GoogleFonts.cairo(
               //               color: Colors.white,
               //               fontWeight: FontWeight.bold,
               //               fontSize: 11,
