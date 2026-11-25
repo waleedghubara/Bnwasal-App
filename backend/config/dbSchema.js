@@ -490,6 +490,7 @@ const setupDatabaseSchema = async (pool) => {
     // Withdrawal details migration
     await addColumnIfNotExists(pool, 'wallet_transactions', 'paymentMethod', 'VARCHAR(50) NULL');
     await addColumnIfNotExists(pool, 'wallet_transactions', 'accountDetails', 'TEXT NULL');
+    await addColumnIfNotExists(pool, 'wallet_transactions', 'category', "VARCHAR(50) DEFAULT 'general'");
 
     // Contact messages source migration
     await addColumnIfNotExists(pool, 'contact_messages', 'source', "ENUM('app', 'website') DEFAULT 'app'");

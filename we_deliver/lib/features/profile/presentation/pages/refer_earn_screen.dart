@@ -65,7 +65,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
   void _shareReferral(String referralCode) {
     final String inviteUrl = '${EndPoint.imageBaseUrl}/invite/$referralCode';
     final String shareMessage =
-        'سجل في منصة بنوصل للشحن والتوصيل باستخدام كود الدعوة الخاص بي: $referralCode واحصل على مكافأة نقدية فورية في محفظتك! رابط التسجيل: $inviteUrl';
+        'سجل في تطبيق GEBLI - جيبلي باستخدام كود الدعوة الخاص بي: $referralCode واحصل على مكافأة فورية في محفظتك! رابط التسجيل: $inviteUrl';
     SharePlus.instance.share(ShareParams(text: shareMessage));
   }
 
@@ -293,12 +293,12 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
             style: TextStyle(
               fontSize: 20.sp,
               fontWeight: FontWeight.w800,
-              color: isDarkMode ? Colors.white : const Color(0xFF204CB3),
+              color: isDarkMode ? Colors.white : AppColors.primary,
             ),
           ),
           SizedBox(height: 8.h),
           Text(
-            'احصل على مكافأة قدرها 15 ج.م رصيد في محفظتك عن كل صديق تقوم بدعوته للتسجيل واستخدام خدمات بنوصل!',
+            'احصل على 15 ج.م فوراً في محفظتك عن كل صديق يقوم بتحميل التطبيق والتسجيل برمز دعوتك!',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 13.sp,
@@ -490,7 +490,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
                             fontWeight: FontWeight.w800,
                             color: isDarkMode
                                 ? Colors.white
-                                : const Color(0xFF204CB3),
+                                : AppColors.primary,
                             letterSpacing: 1.2,
                           ),
                           overflow: TextOverflow.ellipsis,
@@ -523,7 +523,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
               ElevatedButton(
                 onPressed: () => _shareReferral(referralCode),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF204CB3),
+                  backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   minimumSize: Size(60.w, 45.h),
                   elevation: 0,
@@ -639,16 +639,16 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
             stepNumber: '2',
             title: 'الخطوة 2: يقوم صديقك بالتسجيل',
             description:
-                'يقوم صديقك بإنشاء حساب جديد في منصة بنوصل وإدخال كود الدعوة في خانة رمز الإحالة.',
+                'يقوم صديقك بإنشاء حساب جديد في منصة GEBLI - جيبلي وإدخال كود الدعوة في خانة رمز الإحالة.',
             icon: Icons.person_add_alt_outlined,
             isLast: false,
             isDarkMode: isDarkMode,
           ),
           _buildTimelineStep(
             stepNumber: '3',
-            title: 'الخطوة 3: احصل على مكافأتك تلقائيًا',
+            title: 'الخطوة 3: نزول 15 ج.م فوراً بمحفظتك',
             description:
-                'ستحصل أنت وصديقك على المكافأة فورًا بعد إكمال صديقك لأول طلب توصيل أو رحلة في التطبيق.',
+                'يتم إضافة 15 ج.م مباشرة إلى رصيد محفظتك مع إشعار فوري بمجرد أن يقوم صديقك بإنشاء حسابه بنجاح!',
             icon: Icons.wallet_outlined,
             isLast: true,
             isDarkMode: isDarkMode,
@@ -675,7 +675,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
               width: 36.w,
               height: 36.w,
               decoration: const BoxDecoration(
-                color: Color(0xFF204CB3),
+                color: AppColors.primary,
                 shape: BoxShape.circle,
               ),
               child: Center(
@@ -686,7 +686,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
               Container(
                 width: 2.w,
                 height: 48.h,
-                color: const Color(0xFF204CB3).withOpacity(0.2),
+                color: AppColors.primary.withOpacity(0.2),
               ),
           ],
         ),
@@ -752,7 +752,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
               title: 'الأصدقاء المدعوون',
               value: '${statistics.invitedCount} صديق',
               icon: FontAwesomeIcons.userGroup,
-              color: const Color(0xFF204CB3),
+              color: AppColors.primary,
               isDarkMode: isDarkMode,
             ),
             _buildStatCard(
@@ -935,7 +935,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
         statusText = 'تم احتساب المكافأة';
         break;
       case 'completed':
-        statusColor = const Color(0xFF204CB3);
+        statusColor = AppColors.primary;
         statusText = 'مكتملة';
         break;
       case 'pending':
@@ -960,13 +960,13 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
             children: [
               CircleAvatar(
                 radius: 22.r,
-                backgroundColor: const Color(0xFF204CB3).withOpacity(0.1),
+                backgroundColor: AppColors.primary.withOpacity(0.1),
                 child: Text(
                   safeFirstChar(item.name, '?'),
                   style: TextStyle(
                     fontSize: 16.sp,
                     fontWeight: FontWeight.bold,
-                    color: const Color(0xFF204CB3),
+                    color: AppColors.primary,
                   ),
                 ),
               ),
@@ -996,7 +996,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  item.name.isNotEmpty ? item.name : 'مستخدم بنوصل',
+                  item.name.isNotEmpty ? item.name : 'مستخدم جيبلي',
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.bold,
@@ -1157,7 +1157,7 @@ class _ReferEarnScreenState extends State<ReferEarnScreen> {
                 ),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF204CB3),
+                backgroundColor: AppColors.primary,
                 padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 12.h),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12.r),

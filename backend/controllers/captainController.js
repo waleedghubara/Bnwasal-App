@@ -306,13 +306,16 @@ const getCaptainDetail = async (req, res, next) => {
       // Check orders in progress
       const [activeOrders] = await pool.query(
         `SELECT o.id, o.orderNumber as number, 'order' as type, o.status,
-                m.latitude as merchantLatitude, m.longitude as merchantLongitude, 
+                COALESCE(s.latitude, m.latitude) as merchantLatitude, COALESCE(s.longitude, m.longitude) as merchantLongitude, 
                 o.latitude as toLatitude, o.longitude as toLongitude,
                 o.startLatitude, o.startLongitude, o.deliveryAddress as toAddress,
-                'مقر المتجر' as fromAddress, o.orderPrice as price,
-                m.storeName as merchantName, m.phone as merchantPhone
+                COALESCE(NULLIF(s.address, ''), NULLIF(m.storeAddress, ''), NULLIF(m.detailedAddress, ''), NULLIF(s.city, ''), NULLIF(m.city, ''), 'مقر المتجر') as fromAddress,
+                s.address as storeAddress,
+                o.orderPrice as price,
+                COALESCE(s.name, m.storeName) as merchantName, COALESCE(s.phone, m.phone) as merchantPhone
          FROM orders o
          LEFT JOIN users m ON o.merchantId = m.id
+         LEFT JOIN stores s ON (o.storeId = s.id OR (o.storeId IS NULL AND s.merchantId = o.merchantId AND s.deletedAt IS NULL))
          WHERE o.captainId = ? AND o.status IN (
            'Assigned To Captain', 'Captain Arrived', 'Picked Up', 'In Transit', 'Delivered',
            'تم القبول', 'جاري التنفيذ', 'في الطريق'
@@ -341,13 +344,16 @@ const getCaptainDetail = async (req, res, next) => {
 
     const [pastOrders] = await pool.query(
       `SELECT o.id, o.orderNumber as number, 'order' as type, o.status,
-              m.latitude as merchantLatitude, m.longitude as merchantLongitude,
+              COALESCE(s.latitude, m.latitude) as merchantLatitude, COALESCE(s.longitude, m.longitude) as merchantLongitude,
               o.latitude as toLatitude, o.longitude as toLongitude,
               o.startLatitude, o.startLongitude, o.deliveryAddress as toAddress,
-              'مقر المتجر' as fromAddress, o.orderPrice as price, o.createdAt,
-              m.storeName as merchantName, m.phone as merchantPhone
+              COALESCE(NULLIF(s.address, ''), NULLIF(m.storeAddress, ''), NULLIF(m.detailedAddress, ''), NULLIF(s.city, ''), NULLIF(m.city, ''), 'مقر المتجر') as fromAddress,
+              s.address as storeAddress,
+              o.orderPrice as price, o.createdAt,
+              COALESCE(s.name, m.storeName) as merchantName, COALESCE(s.phone, m.phone) as merchantPhone
        FROM orders o
        LEFT JOIN users m ON o.merchantId = m.id
+       LEFT JOIN stores s ON (o.storeId = s.id OR (o.storeId IS NULL AND s.merchantId = o.merchantId AND s.deletedAt IS NULL))
        WHERE o.captainId = ? AND o.status NOT IN (
          'Pending Review', 'Ready For Assignment',
          'Assigned To Captain', 'Captain Arrived', 'Picked Up', 'In Transit', 'Delivered',
@@ -584,6 +590,7 @@ const createCaptain = async (req, res, next) => {
       plateNumber,
       password,
     } = req.body;
+    const rawReferralCode = req.body.referredByCode || req.body.referralCode || req.body.referral_code || req.body.inviteCode;
 
     if (!phone || !phone.trim()) {
       return res.status(400).json({ status: 0, message: 'رقم الهاتف مطلوب' });
@@ -708,7 +715,82 @@ const createCaptain = async (req, res, next) => {
       );
     }
 
+    // Process referral reward if referral code / phone was provided
+    let referrerId = null;
+    if (rawReferralCode && rawReferralCode.toString().trim().length > 0) {
+      const cleanCode = rawReferralCode.toString().trim();
+      const [refRows] = await conn.query(
+        'SELECT id, firstName, lastName, phone, fcmToken, walletBalance FROM users WHERE (LOWER(TRIM(referralCode)) = LOWER(?) OR phone = ?) AND phone != ?',
+        [cleanCode, cleanCode, phone.trim()]
+      );
+      if (refRows.length > 0) {
+        referrerId = refRows[0].id;
+        await conn.query('UPDATE users SET referredBy = ? WHERE id = ?', [referrerId, newCaptainId]);
+        await conn.query('UPDATE users SET walletBalance = COALESCE(walletBalance, 0) + 15.00, points = COALESCE(points, 0) + 15 WHERE id = ?', [referrerId]);
+        const refTxCode = `REF-${Date.now()}-${referrerId}`;
+        const refereeFullName = `${fName} ${lName}`.trim();
+        try {
+          await conn.query(
+            `INSERT INTO wallet_transactions (userId, title, amount, type, status, reference, category, paymentMethod) 
+             VALUES (?, ?, 15.00, 'deposit', 'success', ?, 'referral', 'referral')`,
+            [referrerId, `مكافأة دعوة كابتن جديد (${refereeFullName}) للتسجيل`, refTxCode]
+          );
+        } catch (txErr) {
+          await conn.query(
+            `INSERT INTO wallet_transactions (userId, title, amount, type, status, reference, paymentMethod) 
+             VALUES (?, ?, 15.00, 'deposit', 'success', ?, 'referral')`,
+            [referrerId, `مكافأة دعوة كابتن جديد (${refereeFullName}) للتسجيل`, refTxCode]
+          );
+        }
+        await conn.query(
+          `INSERT INTO referrals (referrerId, refereeId, status, rewardAmount) 
+           VALUES (?, ?, 'completed', 15.00)`,
+          [referrerId, newCaptainId]
+        );
+      }
+    }
+
     await conn.commit();
+
+    // Trigger notifications for referrer after commit
+    if (referrerId) {
+      try {
+        const { createDbNotification, sendPushNotification } = require('../utils/notificationHelper');
+        const refereeFullName = `${fName} ${lName}`.trim();
+        await createDbNotification(
+          referrerId,
+          'مكافأة دعوة صديق! 🎉',
+          `لقد سجل الكابتن ${refereeFullName} باستخدام كود الدعوة الخاص بك وتم إضافة 15 ج.م إلى محفظتك بنجاح!`,
+          'wallet'
+        );
+        const io = global.io;
+        if (io) {
+          const [wRows] = await pool.query('SELECT walletBalance FROM users WHERE id = ?', [referrerId]);
+          const currentBal = wRows.length > 0 ? parseFloat(wRows[0].walletBalance) : 0;
+          io.to(`user_${referrerId}`).emit('wallet_updated', {
+            newBalance: currentBal,
+            depositAmount: 15.00,
+            message: `تم إضافة 15 ج.م إلى محفظتك بنجاح لدعوة ${refereeFullName} 🎉`,
+          });
+          io.to(`user_${referrerId}`).emit('notification', {
+            title: 'مكافأة دعوة صديق! 🎉',
+            message: `تم إضافة 15 ج.م إلى محفظتك بنجاح لتسجيل ${refereeFullName}!`,
+            type: 'wallet'
+          });
+        }
+        const [fcmRows] = await pool.query('SELECT fcmToken FROM users WHERE id = ?', [referrerId]);
+        if (fcmRows.length > 0 && fcmRows[0].fcmToken) {
+          sendPushNotification(
+            fcmRows[0].fcmToken,
+            'مكافأة دعوة صديق! 🎉',
+            `تم إضافة 15 ج.م إلى محفظتك بنجاح لدعوة ${refereeFullName}!`,
+            { type: 'wallet_deposit', amount: '15' }
+          ).catch(err => console.error('Push error:', err));
+        }
+      } catch (err) {
+        console.error('Error notifying referrer:', err);
+      }
+    }
 
     res.status(201).json({
       status: 1,

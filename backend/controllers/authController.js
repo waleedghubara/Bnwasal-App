@@ -61,7 +61,18 @@ const register = async (req, res, next) => {
       return res.status(400).json({ status: 0, message: error });
     }
 
-    const { firstName, lastName, email: rawEmail, phone, password, role, referredByCode } = req.body;
+    const { firstName, lastName, email: rawEmail, phone, password, role, storeName } = req.body;
+    const rawReferralCode = req.body.referredByCode || req.body.referralCode || req.body.referral_code || req.body.inviteCode;
+    
+    if (role === 'merchant') {
+      if (req.file) deleteFile(`/uploads/${req.file.filename}`);
+      return res.status(403).json({
+        status: 0,
+        message: 'تسجيل حسابات التجار يتم حصرياً من خلال لوحة تحكم إدارة المنصة'
+      });
+    }
+
+    const userRole = (role && ['captain', 'client'].includes(role)) ? role : 'client';
     // Normalize email: treat empty string as null
     const email = rawEmail && rawEmail.trim().length > 0 ? rawEmail.trim() : null;
 
@@ -90,12 +101,13 @@ const register = async (req, res, next) => {
       });
     }
 
-    // Check if there is a valid referrer code
+    // Check if there is a valid referrer code or phone number
     let referrerId = null;
-    if (referredByCode && referredByCode.trim().length > 0) {
+    if (rawReferralCode && rawReferralCode.toString().trim().length > 0) {
+      const cleanCode = rawReferralCode.toString().trim();
       const [referrerRows] = await pool.query(
-        'SELECT id FROM users WHERE referralCode = ?',
-        [referredByCode.trim()]
+        'SELECT id, role, firstName, lastName, phone, walletBalance FROM users WHERE (LOWER(TRIM(referralCode)) = LOWER(?) OR phone = ?) AND phone != ?',
+        [cleanCode, cleanCode, phone]
       );
       if (referrerRows.length > 0) {
         referrerId = referrerRows[0].id;
@@ -141,10 +153,11 @@ const register = async (req, res, next) => {
 
     // Insert user into DB
     const [result] = await pool.query(
-      `INSERT INTO users (firstName, lastName, email, phone, password, role, status, otp_code, otp_expiry, profileImage, walletBalance) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.00)`,
-      [firstName, lastName, email, phone, hashedPassword, role, status, otpCode, otpExpiry, profileImagePath]
+      `INSERT INTO users (firstName, lastName, email, phone, password, role, status, otp_code, otp_expiry, profileImage, storeName, walletBalance) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.00)`,
+      [firstName, lastName, email, phone, hashedPassword, userRole, status, otpCode, otpExpiry, profileImagePath, storeName || null]
     );
+
 
     const userId = result.insertId;
 
@@ -158,32 +171,66 @@ const register = async (req, res, next) => {
       [referralCode, referrerId, userId]
     );
 
-    // If there was a valid referrer, reward the referrer immediately with 15 points
+    // If there was a valid referrer, reward the referrer immediately with 15 EGP in wallet
     if (referrerId) {
-      // 1. Increment referrer's points by 15
+      // 1. Increment referrer's wallet balance by 15 EGP (and also 15 points)
       await pool.query(
-        'UPDATE users SET points = points + 15 WHERE id = ?',
+        'UPDATE users SET walletBalance = COALESCE(walletBalance, 0) + 15.00, points = COALESCE(points, 0) + 15 WHERE id = ?',
         [referrerId]
       );
 
-      // 2. Insert completed referral record
+      // 2. Insert transaction in wallet_transactions for referrer
+      const refereeFullName = `${firstName} ${lastName}`.trim();
+      const refTxCode = `REF-${Date.now()}-${referrerId}`;
+      try {
+        await pool.query(
+          `INSERT INTO wallet_transactions (userId, title, amount, type, status, reference, category, paymentMethod) 
+           VALUES (?, ?, 15.00, 'deposit', 'success', ?, 'referral', 'referral')`,
+          [referrerId, `مكافأة دعوة صديق (${refereeFullName}) للتسجيل`, refTxCode]
+        );
+      } catch (txErr) {
+        console.warn('Fallback insert into wallet_transactions without category:', txErr.message);
+        await pool.query(
+          `INSERT INTO wallet_transactions (userId, title, amount, type, status, reference, paymentMethod) 
+           VALUES (?, ?, 15.00, 'deposit', 'success', ?, 'referral')`,
+          [referrerId, `مكافأة دعوة صديق (${refereeFullName}) للتسجيل`, refTxCode]
+        );
+      }
+
+      // 3. Insert completed referral record
       await pool.query(
         `INSERT INTO referrals (referrerId, refereeId, status, rewardAmount) 
          VALUES (?, ?, 'completed', 15.00)`,
         [referrerId, userId]
       );
 
-      // 3. Send notifications to referrer
+      // 4. Send notifications and emit socket to referrer
       try {
         const { createDbNotification, sendPushNotification } = require('../utils/notificationHelper');
-        const refereeName = `${firstName} ${lastName}`;
         
         await createDbNotification(
           referrerId,
           'مكافأة دعوة صديق! 🎉',
-          `لقد سجل صديقك ${refereeName} باستخدام رابط الدعوة الخاص بك وحصلت على 15 نقطة جديدة (ما يعادل 15 ج.م)!`,
-          'referral'
+          `لقد سجل صديقك ${refereeFullName} باستخدام رابط الدعوة الخاص بك وتم إضافة 15 ج.م إلى رصيد محفظتك بنجاح!`,
+          'wallet'
         );
+
+        // Emit real-time wallet update if connected
+        const io = global.io;
+        if (io) {
+          const [wRows] = await pool.query('SELECT walletBalance FROM users WHERE id = ?', [referrerId]);
+          const currentBal = wRows.length > 0 ? parseFloat(wRows[0].walletBalance) : 0;
+          io.to(`user_${referrerId}`).emit('wallet_updated', {
+            newBalance: currentBal,
+            depositAmount: 15.00,
+            message: `تم إضافة 15 ج.م إلى محفظتك بنجاح لدعوة صديقك ${refereeFullName} 🎉`,
+          });
+          io.to(`user_${referrerId}`).emit('notification', {
+            title: 'مكافأة دعوة صديق! 🎉',
+            message: `تم إضافة 15 ج.م إلى محفظتك بنجاح لتسجيل صديقك (${refereeFullName})!`,
+            type: 'wallet'
+          });
+        }
 
         // Fetch referrer token to send push
         const [referrerRows] = await pool.query('SELECT fcmToken FROM users WHERE id = ?', [referrerId]);
@@ -191,8 +238,8 @@ const register = async (req, res, next) => {
           sendPushNotification(
             referrerRows[0].fcmToken,
             'مكافأة دعوة صديق! 🎉',
-            `لقد سجل صديقك ${refereeName} باستخدام رابط الدعوة الخاص بك وحصلت على 15 نقطة جديدة (ما يعادل 15 ج.م)!`,
-            { type: 'referral_points', points: '15' }
+            `لقد سجل صديقك ${refereeFullName} باستخدام رابط الدعوة وتم إضافة 15 ج.م إلى رصيد محفظتك!`,
+            { type: 'wallet_deposit', amount: '15' }
           ).catch(err => console.error('Push error:', err));
         }
       } catch (notiErr) {
@@ -281,8 +328,8 @@ const verifyOtp = async (req, res, next) => {
 
     // Determine next status
     // Captains go to pending_verification (need documents & admin approval)
-    // Merchants go directly to active!
-    const nextStatus = user.role === 'merchant' ? 'active' : 'pending_verification';
+    // Merchants and Clients go directly to active!
+    const nextStatus = (user.role === 'merchant' || user.role === 'client') ? 'active' : 'pending_verification';
 
     await pool.query(
       'UPDATE users SET status = ?, otp_code = NULL, otp_expiry = NULL WHERE id = ?',
@@ -394,19 +441,20 @@ const resendOtp = async (req, res, next) => {
 const login = async (req, res, next) => {
   try {
     const pool = getPool();
-    const { email, password } = req.body; // email field can accept email or phone
+    const identifier = req.body.email || req.body.phone || req.body.username;
+    const { password } = req.body;
 
-    if (!email || !password) {
+    if (!identifier || !password) {
       return res.status(400).json({
         status: 0,
-        message: 'البريد الالكتروني وكلمة المرور مطلوبان'
+        message: 'البريد الالكتروني أو رقم الهاتف وكلمة المرور مطلوبان'
       });
     }
 
     // Search user by email or phone
     const [users] = await pool.query(
       'SELECT * FROM users WHERE email = ? OR phone = ?',
-      [email, email]
+      [identifier, identifier]
     );
 
     if (users.length === 0) {
@@ -426,7 +474,7 @@ const login = async (req, res, next) => {
       });
     }
 
-    if (user.role === 'merchant' && user.status === 'pending_verification') {
+    if ((user.role === 'merchant' || user.role === 'client') && user.status === 'pending_verification') {
       await pool.query('UPDATE users SET status = "active" WHERE id = ?', [user.id]);
       user.status = 'active';
     }
@@ -646,7 +694,7 @@ const getProfile = async (req, res, next) => {
 
     const user = users[0];
 
-    if (user.role === 'merchant' && user.status === 'pending_verification') {
+    if ((user.role === 'merchant' || user.role === 'client') && user.status === 'pending_verification') {
       await pool.query('UPDATE users SET status = "active" WHERE id = ?', [user.id]);
       user.status = 'active';
     }

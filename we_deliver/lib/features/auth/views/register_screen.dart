@@ -15,8 +15,6 @@ import '../../../core/routes/routes.dart';
 import '../logic/auth_cubit.dart';
 import '../logic/auth_state.dart';
 
-enum AccountType { merchant, captain, rider }
-
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -25,19 +23,30 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  int _currentStep = 0;
-  AccountType? _selectedType;
   bool _agreeToTerms = false;
   bool _obscurePassword = true;
 
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _referralCodeController = TextEditingController();
+
   File? _profileImage;
   final _picker = ImagePicker();
   bool _isRegistering = false;
+
+  @override
+  void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _passwordController.dispose();
+    _referralCodeController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickImage() async {
     showModalBottomSheet(
@@ -102,7 +111,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       final pickedFile = await _picker.pickImage(
         source: source,
-        imageQuality: 70,
+        imageQuality: 75,
       );
       if (pickedFile != null) {
         setState(() {
@@ -129,16 +138,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.grey),
-          onPressed: () {
-            if (_currentStep > 0) {
-              setState(() => _currentStep--);
-            } else {
-              Navigator.pop(context);
-            }
-          },
+          onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-          'إنشاء حساب',
+          'إنشاء حساب جديد',
           style: TextStyle(
             color: Colors.black,
             fontSize: 18,
@@ -155,10 +158,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 _isRegistering = false;
               });
               final registeredPhone = _phoneController.text.trim();
-              // Save registration details to SharedPreferences to resume verify flow if app is closed
               SharedPreferences.getInstance().then((prefs) {
                 prefs.setString('pending_otp_email', registeredPhone);
                 prefs.setString('pending_otp_code', state.otpCode);
+                prefs.setString('user_role', 'client');
               });
 
               ScaffoldMessenger.of(context).showSnackBar(
@@ -168,11 +171,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   behavior: SnackBarBehavior.floating,
                 ),
               );
+              final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+              final returnOnSuccess = args?['returnOnSuccess'] == true;
+
               Navigator.pushNamed(
                 context,
                 Routes.otp,
-                arguments: {'phone': registeredPhone, 'otpCode': state.otpCode},
-              );
+                arguments: {
+                  'phone': registeredPhone,
+                  'otpCode': state.otpCode,
+                  'returnOnSuccess': returnOnSuccess,
+                },
+              ).then((result) {
+                if (result == true && returnOnSuccess && context.mounted) {
+                  Navigator.pop(context, true);
+                }
+              });
             } else if (state is AuthError) {
               setState(() {
                 _isRegistering = false;
@@ -187,13 +201,270 @@ class _RegisterScreenState extends State<RegisterScreen> {
             }
           },
           builder: (context, state) {
+            final isLoading = state is AuthLoading;
             return SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                child: _currentStep == 0
-                    ? _buildSelectionStep()
-                    : _buildFormStep(state is AuthLoading),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Image.asset(AppAssets.appLogo2, width: 85, height: 85),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'إنشاء حساب عميل',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'قم بإنشاء حسابك للطلب من أفضل المطاعم والمتاجر وتوصيل احتياجاتك بكل سهولة',
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Photo Picker
+                  GestureDetector(
+                    onTap: _pickImage,
+                    child: Center(
+                      child: Stack(
+                        children: [
+                          Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: AppColors.primary.withOpacity(0.3),
+                                width: 1.5,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primary.withOpacity(0.08),
+                                  blurRadius: 15,
+                                  offset: const Offset(0, 5),
+                                ),
+                              ],
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(18),
+                              child: _profileImage != null
+                                  ? Image.file(_profileImage!, fit: BoxFit.cover)
+                                  : Center(
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: const [
+                                          Icon(
+                                            Icons.person_outline,
+                                            size: 36,
+                                            color: AppColors.primary,
+                                          ),
+                                          SizedBox(height: 4),
+                                          Text(
+                                            'الصورة',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: AppColors.textSecondary,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            child: Container(
+                              padding: const EdgeInsets.all(7),
+                              decoration: const BoxDecoration(
+                                color: AppColors.primary,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const FaIcon(
+                                FontAwesomeIcons.camera,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  _buildLabel('الاسم الأول'),
+                  CustomTextField(
+                    controller: _firstNameController,
+                    hintText: 'الاسم الأول',
+                    rightWidget: const Padding(
+                      padding: EdgeInsets.all(10.0),
+                      child: FaIcon(FontAwesomeIcons.user, color: AppColors.primary, size: 16),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  _buildLabel('الاسم الأخير'),
+                  CustomTextField(
+                    controller: _lastNameController,
+                    hintText: 'الاسم الأخير',
+                    rightWidget: const Padding(
+                      padding: EdgeInsets.all(10.0),
+                      child: FaIcon(FontAwesomeIcons.userAlt, color: AppColors.primary, size: 16),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  _buildLabel('رقم الهاتف'),
+                  CustomTextField(
+                    controller: _phoneController,
+                    hintText: '01xxxxxxxxx',
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(11),
+                    ],
+                    rightWidget: const Padding(
+                      padding: EdgeInsets.all(10.0),
+                      child: FaIcon(FontAwesomeIcons.phone, color: AppColors.primary, size: 16),
+                    ),
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 14),
+
+                  _buildLabel('البريد الإلكتروني (اختياري)'),
+                  CustomTextField(
+                    controller: _emailController,
+                    hintText: 'example@domain.com',
+                    rightWidget: const Padding(
+                      padding: EdgeInsets.all(10.0),
+                      child: FaIcon(FontAwesomeIcons.envelope, color: AppColors.primary, size: 16),
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 14),
+
+                  _buildLabel('كلمة المرور'),
+                  CustomTextField(
+                    controller: _passwordController,
+                    hintText: '••••••••',
+                    obscureText: _obscurePassword,
+                    rightWidget: const Padding(
+                      padding: EdgeInsets.all(10.0),
+                      child: FaIcon(FontAwesomeIcons.lock, color: AppColors.primary, size: 16),
+                    ),
+                    leftWidget: IconButton(
+                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      icon: FaIcon(
+                        _obscurePassword ? FontAwesomeIcons.eyeSlash : FontAwesomeIcons.eye,
+                        color: AppColors.primary,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  _buildLabel('كود الدعوة / الإحالة (اختياري)'),
+                  CustomTextField(
+                    controller: _referralCodeController,
+                    hintText: 'أدخل كود الدعوة أو رقم هاتف الصديق إن وُجد',
+                    rightWidget: const Padding(
+                      padding: EdgeInsets.all(10.0),
+                      child: FaIcon(FontAwesomeIcons.gift, color: AppColors.primary, size: 16),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _agreeToTerms,
+                        onChanged: (val) => setState(() => _agreeToTerms = val ?? false),
+                        activeColor: AppColors.primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const Text('أوافق على ', style: TextStyle(fontSize: 13.5)),
+                      GestureDetector(
+                        onTap: () => Navigator.pushNamed(context, Routes.termsConditions),
+                        child: const Text(
+                          'شروط الخدمة وسياسة الخصوصية',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 26),
+
+                  CustomButton(
+                    text: 'إنشاء الحساب وتأكيد الهاتف',
+                    isLoading: isLoading || _isRegistering,
+                    onPressed: _agreeToTerms
+                        ? () {
+                            if (_isRegistering) return;
+
+                            final firstName = _firstNameController.text.trim();
+                            final lastName = _lastNameController.text.trim();
+
+                            if (firstName.isEmpty || lastName.isEmpty) {
+                              _showError('الرجاء إدخال الاسم الأول والأخير');
+                              return;
+                            }
+
+                            final phone = _phoneController.text.trim();
+                            final email = _emailController.text.trim();
+                            final password = _passwordController.text.trim();
+                            final referralCode = _referralCodeController.text.trim();
+
+                            if (phone.isEmpty || phone.length < 11) {
+                              _showError('الرجاء إدخال رقم هاتف صحيح مكون من 11 رقماً');
+                              return;
+                            }
+
+                            if (password.isEmpty || password.length < 6) {
+                              _showError('الرجاء إدخال كلمة مرور لا تقل عن 6 أحرف');
+                              return;
+                            }
+
+                            FocusScope.of(context).unfocus();
+                            setState(() => _isRegistering = true);
+
+                            context.read<AuthCubit>().register(
+                              firstName: firstName,
+                              lastName: lastName,
+                              email: email.isNotEmpty ? email : null,
+                              phone: phone,
+                              password: password,
+                              role: 'client',
+                              profileImage: _profileImage,
+                              referralCode: referralCode.isNotEmpty ? referralCode : null,
+                            );
+                          }
+                        : () {},
+                    color: _agreeToTerms ? AppColors.primary : Colors.grey.shade400,
+                    textColor: Colors.white,
+                    borderRadius: 16,
+                    height: 56,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildLoginLink(),
+                  const SizedBox(height: 35),
+                ],
               ),
             );
           },
@@ -202,432 +473,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  Widget _buildSelectionStep() {
-    return Column(
-      key: const ValueKey(0),
-      children: [
-        Image.asset(AppAssets.appLogo2, width: 120, height: 120),
-
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.start,
-          children: [
-            const Text(
-              'إنشاء حساب',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w900,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _selectedType == AccountType.captain
-                  ? 'أنشئ حسابك الآن واستفد من خدمات شراء الطلبات، الشحن، والتوصيل بكل سهولة وسرعة وأمان'
-                  : _selectedType == AccountType.merchant
-                  ? 'أنشئ حسابك الآن واستفد من خدمات شراء الطلبات،الشحن، والتوصيل بكل سهولة وسرعة وأمان.'
-                  : 'أنشئ حسابك الآن واستفد من خدمات شراء الطلبات،الشحن، والتوصيل بكل سهولة وسرعة وأمان.',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 40),
-        _buildTypeCard(
-          type: AccountType.merchant,
-          title: 'تاجر او عميل',
-          description:
-              'اذا كنت تاجر تريد شحن منتجاتك واوردراتك او عميل تريد مندوب لشراء وتوصيل احتياجاتك  ',
-          icon: AppAssets.shop,
-        ),
-        const SizedBox(height: 16),
-        _buildTypeCard(
-          type: AccountType.captain,
-          title: 'كابتن توصيل',
-          description:
-              'انضم إلى شبكة مندوبي بنوصل واستقبل طلبات التوصيل في منطقتك وزيادة دخلك بمرونة',
-          icon: AppAssets.rider,
-        ),
-        const SizedBox(height: 40),
-        CustomButton(
-          text: 'التالي',
-          onPressed: _selectedType != null
-              ? () => setState(() => _currentStep = 1)
-              : () {},
-          color: _selectedType != null
-              ? AppColors.primary
-              : Colors.grey.shade400,
-          textColor: Colors.white,
-          borderRadius: 16,
-          height: 56,
-        ),
-        const SizedBox(height: 24),
-        _buildLoginLink(),
-      ],
-    );
-  }
-
-  Widget _buildFormStep(bool isLoading) {
-    String title = _selectedType == AccountType.merchant
-        ? 'إنشاء حساب التاجر / مستخدم'
-        : 'إنشاء حساب كابتن توصيل';
-    return Column(
-      key: const ValueKey(1),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Center(child: Image.asset(AppAssets.appLogo2, width: 100, height: 100)),
-        const SizedBox(height: 20),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w900,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          _selectedType == AccountType.captain
-              ? 'قم بإنشاء حسابك لتبدأ استقبال طلبات التوصيل وإدارة رحلاتك وزيادة دخلك بكل سهولة'
-              : 'قم بانشاء حسابك لتمكن من اضافة منتجاتك و ادارتها بسهولة و كيفية تنظيم عملية التوصيل لعملائك',
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textSecondary,
-            height: 1.4,
-          ),
-        ),
-        const SizedBox(height: 30),
-        GestureDetector(
-          onTap: _pickImage,
-          child: Center(
-            child: Stack(
-              children: [
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: _profileImage != null
-                        ? Image.file(_profileImage!, fit: BoxFit.cover)
-                        : Center(
-                            child: Image.asset(
-                              AppAssets.group,
-                              width: 80,
-                              height: 80,
-                            ),
-                          ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: const FaIcon(
-                      FontAwesomeIcons.camera,
-                      size: 16,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 30),
-        _buildLabel('الاسم الاول'),
-        CustomTextField(
-          controller: _firstNameController,
-          hintText: 'الاسم الاول',
-          rightWidget: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: FaIcon(
-              FontAwesomeIcons.user,
-              color: AppColors.primary,
-              size: 18,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildLabel('الاسم الاخير'),
-        CustomTextField(
-          controller: _lastNameController,
-          hintText: 'الاسم الاخير',
-          rightWidget: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: FaIcon(
-              FontAwesomeIcons.userAlt,
-              color: AppColors.primary,
-              size: 18,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildLabel('رقم الهاتف'),
-        CustomTextField(
-          controller: _phoneController,
-          hintText: 'رقم الهاتف',
-          // maxLength: 11,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(11),
-          ],
-          rightWidget: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: FaIcon(
-              FontAwesomeIcons.phone,
-              color: AppColors.primary,
-              size: 18,
-            ),
-          ),
-          keyboardType: TextInputType.phone,
-        ),
-        const SizedBox(height: 16),
-        _buildLabel('كلمة المرور'),
-        CustomTextField(
-          controller: _passwordController,
-          hintText: 'كلمة المرور',
-          obscureText: _obscurePassword,
-          rightWidget: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: FaIcon(
-              FontAwesomeIcons.lock,
-              color: AppColors.primary,
-              size: 18,
-            ),
-          ),
-          leftWidget: IconButton(
-            onPressed: () =>
-                setState(() => _obscurePassword = !_obscurePassword),
-            icon: FaIcon(
-              _obscurePassword
-                  ? FontAwesomeIcons.eyeSlash
-                  : FontAwesomeIcons.eye,
-              color: AppColors.primary,
-              size: 18,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        _buildLabel('كود الدعوة (اختياري)'),
-        CustomTextField(
-          controller: _referralCodeController,
-          hintText: 'أدخل كود الدعوة إن وُجد',
-          rightWidget: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: FaIcon(
-              FontAwesomeIcons.gift,
-              color: AppColors.primary,
-              size: 18,
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Checkbox(
-              value: _agreeToTerms,
-              onChanged: (val) => setState(() => _agreeToTerms = val ?? false),
-              activeColor: AppColors.primary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const Text('اوافق علي ', style: TextStyle(fontSize: 14)),
-            GestureDetector(
-              onTap: () => Navigator.pushNamed(context, Routes.termsConditions),
-              child: const Text(
-                'الشروط و الاحكام',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 30),
-        CustomButton(
-          text: 'التالي',
-          isLoading: isLoading || _isRegistering,
-          onPressed: _agreeToTerms
-              ? () {
-                  if (_isRegistering) return;
-
-                  final firstName = _firstNameController.text.trim();
-                  final lastName = _lastNameController.text.trim();
-                  final phone = _phoneController.text.trim();
-                  final password = _passwordController.text.trim();
-                  final referralCode = _referralCodeController.text.trim();
-
-                  if (_profileImage == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'الرجاء اختيار صورة شخصية أولاً',
-                          textAlign: TextAlign.right,
-                        ),
-                        backgroundColor: Colors.red,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (firstName.isEmpty || lastName.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'الرجاء إدخال الاسم الأول والأخير',
-                          textAlign: TextAlign.right,
-                        ),
-                        backgroundColor: Colors.red,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (phone.isEmpty || phone.length < 11) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'الرجاء إدخال رقم هاتف صحيح مكون من 11 رقماً',
-                          textAlign: TextAlign.right,
-                        ),
-                        backgroundColor: Colors.red,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                    return;
-                  }
-
-                  if (password.isEmpty || password.length < 6) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'الرجاء إدخال كلمة مرور لا تقل عن 6 أحرف',
-                          textAlign: TextAlign.right,
-                        ),
-                        backgroundColor: Colors.red,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                    return;
-                  }
-
-                  FocusScope.of(context).unfocus();
-                  setState(() => _isRegistering = true);
-                  context.read<AuthCubit>().register(
-                    firstName: firstName,
-                    lastName: lastName,
-                    phone: phone,
-                    password: password,
-                    role: _selectedType == AccountType.merchant
-                        ? 'merchant'
-                        : 'captain',
-                    profileImage: _profileImage,
-                    referralCode: referralCode.isNotEmpty ? referralCode : null,
-                  );
-                }
-              : () {},
-          color: _agreeToTerms ? AppColors.primary : Colors.grey.shade400,
-          textColor: Colors.white,
-          borderRadius: 16,
-          height: 56,
-        ),
-        const SizedBox(height: 24),
-        _buildLoginLink(),
-        const SizedBox(height: 40),
-      ],
-    );
-  }
-
-  Widget _buildTypeCard({
-    required AccountType type,
-    required String title,
-    required String description,
-    required String icon,
-  }) {
-    bool isSelected = _selectedType == type;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedType = type),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? AppColors.primary.withOpacity(0.05)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isSelected ? AppColors.primary : Colors.grey.shade300,
-          ),
-        ),
-        child: Row(
-          children: [
-            Image.asset(icon, width: 60, height: 60),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: isSelected
-                          ? AppColors.primary
-                          : AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, textAlign: TextAlign.right),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
 
   Widget _buildLabel(String text) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6.0, right: 4.0),
       child: Text(
         text,
         style: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w700,
+          fontSize: 13.5,
+          fontWeight: FontWeight.bold,
           color: AppColors.textPrimary,
         ),
       ),
@@ -639,20 +502,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const Text(
-          'لديك حساب بالفعل ؟ ',
+          'لديك حساب بالفعل؟',
           style: TextStyle(
             fontSize: 14,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w500,
             color: AppColors.textSecondary,
           ),
         ),
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pushReplacementNamed(context, Routes.login),
           child: const Text(
-            'تسجيل دخول',
+            'تسجيل الدخول',
             style: TextStyle(
               fontSize: 14,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.bold,
               color: AppColors.primary,
             ),
           ),
